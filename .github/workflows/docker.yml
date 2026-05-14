@@ -8,10 +8,6 @@ on:
     tags:
       - 'v*'
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/literature-pipeline
-
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -22,6 +18,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set lowercase owner
+        run: echo "OWNER_LC=${OWNER,,}" >> $GITHUB_ENV
+        env:
+          OWNER: ${{ github.repository_owner }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -37,7 +38,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ghcr.io/${{ env.OWNER_LC }}/literature-pipeline
           tags: |
             type=raw,value=latest
             type=ref,event=tag
