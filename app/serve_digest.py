@@ -25,8 +25,8 @@ SELECT
 FROM papers_fts
 JOIN papers p ON p.id = papers_fts.rowid
 WHERE papers_fts MATCH ?
-ORDER BY rank
-LIMIT ?
+ORDER BY score
+LIMIT ?;
 """
 
 PAGE = """
