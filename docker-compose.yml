@@ -21,7 +21,7 @@ services:
   digest-viewer:
     build: .
     container_name: literature-digest-viewer
-    command: ["python", "-m", "app.serve_digest", "--host", "0.0.0.0", "--port", "8080", "--dir", "/data/digests"]
+    command: ["python", "-m", "app.serve_digest", "--host", "100.99.152.63", "--port", "8080", "--dir", "/data/digests"]
     environment:
       DIGEST_DIR: /data/digests
     volumes:
