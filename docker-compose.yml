@@ -8,7 +8,7 @@ services:
     environment:
       DB_PATH: /data/pipeline.db
       DIGEST_DIR: /data/digests
-      ENABLE_SUMMARY: "false"
+      ENABLE_SUMMARY: "true"
       MODEL_PATH: /models/qwen2.5-3b-instruct-q4_k_m.gguf
       MODEL_NAME: qwen2.5-3b-instruct-q4_k_m
       N_CTX: "4096"
