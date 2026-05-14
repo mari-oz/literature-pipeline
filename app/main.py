@@ -2,129 +2,96 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from datetime import datetime
 from pathlib import Path
 
-import yaml
-
 from app.fetch_biorxiv import fetch_neuroscience_feed
+from app.migrations import migrate
+from app.enrich_biorxiv import enrich_unsynced_papers
+from app.summarize import build_llm, summarize_unsummarized_papers
 
 
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-
     conn = sqlite3.connect(db_path)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")
-
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS app_meta (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-        """)
-
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS papers (
-            id INTEGER PRIMARY KEY,
-            title TEXT NOT NULL,
-            link TEXT NOT NULL UNIQUE,
-            published TEXT,
-            summary TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
+        migrate(conn)
         conn.commit()
     finally:
         conn.close()
 
 
-def load_config(config_path: Path) -> dict:
-    with config_path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
 def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
     conn = sqlite3.connect(db_path)
-    inserted = 0
-
     try:
+        inserted = 0
         for paper in papers:
+            doi = paper.get("doi")
+            title = paper.get("title")
+            link = paper.get("link")
+            published_date = paper.get("published") or paper.get("date")
+            summary = paper.get("summary")
+
+            if not title:
+                continue
+
             cur = conn.execute(
                 """
-                INSERT OR IGNORE INTO papers (title, link, published, summary)
-                VALUES (?, ?, ?, ?)
+                INSERT OR IGNORE INTO papers (doi, title, link, published_date, summary)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (paper["title"], paper["link"], paper["published"], paper["summary"]),
+                (doi, title, link, published_date, summary),
             )
             if cur.rowcount > 0:
                 inserted += 1
 
         conn.commit()
+        return inserted
     finally:
         conn.close()
 
-    return inserted
 
+def run_pipeline(db_path: Path) -> tuple[int, int, int]:
+    papers = fetch_neuroscience_feed()
+    inserted = insert_new_papers(db_path, papers)
 
-def write_digest(output_dir: Path, papers: list[dict], inserted: int) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    out_path = output_dir / f"biorxiv_digest_{ts}.md"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
 
-    lines = [
-        f"# bioRxiv neuroscience digest",
-        "",
-        f"Generated: {datetime.now().isoformat(timespec='seconds')}",
-        f"Total feed items seen: {len(papers)}",
-        f"New papers inserted: {inserted}",
-        "",
-    ]
+        enriched = enrich_unsynced_papers(conn, server="biorxiv")
 
-    for paper in papers[:20]:
-        lines.extend(
-            [
-                f"## {paper['title']}",
-                f"- Published: {paper['published']}",
-                f"- Link: {paper['link']}",
-                "",
-                paper["summary"],
-                "",
-            ]
-        )
+        model_path = os.getenv("MODEL_PATH")
+        model_name = os.getenv("MODEL_NAME", "local-llama")
+        do_summary = os.getenv("ENABLE_SUMMARY", "false").lower() == "true"
 
-    out_path.write_text("\n".join(lines), encoding="utf-8")
-    return out_path
+        summarized = 0
+        if do_summary and model_path:
+            llm = build_llm(
+                model_path=model_path,
+                n_ctx=int(os.getenv("N_CTX", "4096")),
+                n_gpu_layers=int(os.getenv("N_GPU_LAYERS", "0")),
+            )
+            summarized = summarize_unsummarized_papers(
+                conn=conn,
+                llm=llm,
+                model_name=model_name,
+            )
+
+        return inserted, enriched, summarized
+    finally:
+        conn.close()
 
 
 def main() -> None:
-    config_path = Path(os.environ.get("CONFIG_PATH", "/config/config.yaml"))
-    db_path = Path(os.environ.get("DB_PATH", "/data/pipeline.db"))
-
-    config = load_config(config_path)
-    output_dir = Path(config.get("output", {}).get("dir", "/output"))
-
+    db_path = Path(os.getenv("DB_PATH", "/data/pipeline.db"))
     init_db(db_path)
 
-    fetched = fetch_neuroscience_feed()
-    papers = [
-        {
-            "title": p.title,
-            "link": p.link,
-            "published": p.published,
-            "summary": p.summary,
-        }
-        for p in fetched
-    ]
-
-    inserted = insert_new_papers(db_path, papers)
-    digest_path = write_digest(output_dir, papers, inserted)
-
-    print(f"Fetched {len(papers)} papers")
-    print(f"Inserted {inserted} new papers")
-    print(f"Wrote digest to {digest_path}")
+    inserted, enriched, summarized = run_pipeline(db_path)
+    print(
+        f"Done. inserted={inserted} enriched={enriched} summarized={summarized}"
+    )
 
 
 if __name__ == "__main__":
