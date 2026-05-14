@@ -10,10 +10,7 @@ from app.migrations import migrate
 from app.enrich_biorxiv import enrich_unsynced_papers
 from app.enrich_publication import enrich_publication_metadata
 from app.generate_digest import generate_digest
-from migrations import migrate
-from summarize import update_summary_text
 
-DB_PATH = Path('/data/pipeline.db')
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=30)
@@ -85,8 +82,7 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int, int]:
     try:
         enriched = enrich_unsynced_papers(conn, server="biorxiv")
         publication_updates = enrich_publication_metadata(conn, server="biorxiv")
-        migrate(conn)
-        update_summary_text(conn)
+
         model_path = os.getenv("MODEL_PATH")
         model_name = os.getenv("MODEL_NAME", "local-llama")
         do_summary = os.getenv("ENABLE_SUMMARY", "false").lower() == "true"
@@ -95,7 +91,7 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int, int]:
         if do_summary and model_path:
             try:
                 from app.summarize import build_llm, summarize_unsummarized_papers
-                
+
                 llm = build_llm(
                     model_path=model_path,
                     n_ctx=int(os.getenv("N_CTX", "4096")),
@@ -133,7 +129,7 @@ def write_digest(db_path: Path) -> Path:
 def main() -> None:
     db_path = Path(os.getenv("DB_PATH", "/data/pipeline.db"))
     init_db(db_path)
-    
+
     inserted, enriched, publication_updates, summarized = run_pipeline(db_path)
     digest_path = write_digest(db_path)
 
@@ -144,15 +140,5 @@ def main() -> None:
     )
 
 
-def run_pipeline() -> None:
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        migrate(conn)
-        update_summary_text(conn)
-    finally:
-        conn.close()
-
-
-if __name__ == '__main__':
-    run_pipeline()
-    print('pipeline prep complete')
+if __name__ == "__main__":
+    main()
