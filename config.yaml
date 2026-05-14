@@ -1,0 +1,9 @@
+app:
+  name: literature-pipeline
+  timezone: Europe/Berlin
+  log_level: INFO
+
+paths:
+  db: /data/pipeline.db
+  output_dir: /output
+  log_dir: /logs
