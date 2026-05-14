@@ -36,6 +36,7 @@ def md_table(rows: list[sqlite3.Row], columns: list[str]) -> str:
         body.append("| " + " | ".join(vals) + " |")
     return "\n".join([header, sep] + body)
 
+
 def render_recent_structured_summaries(rows: list[sqlite3.Row]) -> str:
     if not rows:
         return "_None._"
@@ -82,6 +83,7 @@ def render_recent_structured_summaries(rows: list[sqlite3.Row]) -> str:
         parts.append("")
 
     return "\n".join(parts)
+
 
 def generate_digest(conn: sqlite3.Connection) -> str:
     integrity = conn.execute("PRAGMA integrity_check;").fetchone()[0]
@@ -139,7 +141,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         JOIN papers p ON p.id = s.paper_id
         WHERE datetime(s.created_at) >= datetime('now', '-1 day')
         ORDER BY datetime(s.created_at) DESC
-        """
+        """,
     )
 
     published_versions = fetchall(
