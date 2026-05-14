@@ -3,3 +3,4 @@ feedparser
 requests
 llama-cpp-python
 flask
+markdown
