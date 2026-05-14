@@ -14,7 +14,7 @@ SELECT
     p.doi,
     p.published_date,
     p.category,
-    bm25(papers_fts, 10.0, 2.0, 5.0) AS score,
+    bm25(papers_fts, 10.0, 3.0, 1.0) AS score,
     snippet(papers_fts, 2, '<mark>', '</mark>', ' … ', 18) AS snippet
 FROM papers_fts
 JOIN papers p ON p.id = papers_fts.rowid
@@ -46,7 +46,7 @@ def smoke_test(conn: sqlite3.Connection) -> dict:
     count = conn.execute("SELECT COUNT(*) FROM papers_fts").fetchone()[0]
     sample = conn.execute(
         """
-        SELECT p.id, p.title, bm25(papers_fts, 10.0, 2.0, 5.0) AS score
+        SELECT p.id, p.title, bm25(papers_fts, 10.0, 3.0, 1.0) AS score
         FROM papers_fts
         JOIN papers p ON p.id = papers_fts.rowid
         WHERE papers_fts MATCH 'calcium OR hippocampus OR imaging'
