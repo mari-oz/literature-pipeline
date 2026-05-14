@@ -52,6 +52,25 @@ def normalize_summary(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_summary_text(result: dict[str, Any]) -> str:
+    parts: list[str] = []
+
+    if result.get("research_question"):
+        parts.append(f"research question: {result['research_question']}")
+    if result.get("model_system"):
+        parts.append(f"model system: {result['model_system']}")
+    if result.get("methods"):
+        parts.append("methods: " + "; ".join(result["methods"]))
+    if result.get("main_findings"):
+        parts.append("main findings: " + "; ".join(result["main_findings"]))
+    if result.get("limitations"):
+        parts.append("limitations: " + "; ".join(result["limitations"]))
+    if result.get("keywords"):
+        parts.append("keywords: " + "; ".join(result["keywords"]))
+
+    return "\n".join(parts)
+
+
 def summarize_abstract(llm: Llama, title: str, abstract: str) -> dict[str, Any]:
     system = (
         "You extract scientific information faithfully from neuroscience abstracts. "
@@ -118,6 +137,7 @@ def summarize_unsummarized_papers(
     for paper_id, title, abstract in rows:
         try:
             result = summarize_abstract(llm, title, abstract)
+            summary_text = build_summary_text(result)
 
             conn.execute(
                 """
@@ -134,10 +154,11 @@ def summarize_unsummarized_papers(
                 """
                 UPDATE papers
                 SET summary = COALESCE(?, summary),
+                    summary_text = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (short_summary, paper_id),
+                (short_summary, summary_text, paper_id),
             )
             count += 1
 
