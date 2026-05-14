@@ -41,6 +41,17 @@ def build_llm(model_path: str, n_ctx: int = 4096, n_gpu_layers: int = 0) -> Llam
     )
 
 
+def normalize_summary(result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "research_question": str(result.get("research_question", "") or ""),
+        "model_system": str(result.get("model_system", "") or ""),
+        "methods": [str(x) for x in (result.get("methods", []) or [])],
+        "main_findings": [str(x) for x in (result.get("main_findings", []) or [])],
+        "limitations": [str(x) for x in (result.get("limitations", []) or [])],
+        "keywords": [str(x) for x in (result.get("keywords", []) or [])],
+    }
+
+
 def summarize_abstract(llm: Llama, title: str, abstract: str) -> dict[str, Any]:
     system = (
         "You extract scientific information faithfully from neuroscience abstracts. "
@@ -48,14 +59,19 @@ def summarize_abstract(llm: Llama, title: str, abstract: str) -> dict[str, Any]:
         "If a field is unknown, use an empty string or empty list."
     )
 
-    user = f"""Schema:
-{json.dumps(SUMMARY_SCHEMA, ensure_ascii=False)}
-
-Title:
+    user = f"""Title:
 {title}
 
 Abstract:
 {abstract}
+
+Extract these fields:
+- research_question
+- model_system
+- methods
+- main_findings
+- limitations
+- keywords
 """
 
     response = llm.create_chat_completion(
@@ -64,23 +80,22 @@ Abstract:
             {"role": "user", "content": user},
         ],
         temperature=0.1,
+        max_tokens=700,
         response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "paper_summary",
-                "schema": SUMMARY_SCHEMA,
-            },
+            "type": "json_object",
+            "schema": SUMMARY_SCHEMA,
         },
     )
 
     content = response["choices"][0]["message"]["content"]
-    return json.loads(content)
+    return normalize_summary(json.loads(content))
 
 
 def summarize_unsummarized_papers(
     conn: sqlite3.Connection,
     llm: Llama,
     model_name: str,
+    limit: int = 20,
 ) -> int:
     rows = conn.execute(
         """
@@ -94,14 +109,16 @@ def summarize_unsummarized_papers(
           AND p.abstract != ''
           AND s.id IS NULL
         ORDER BY p.created_at ASC
+        LIMIT ?
         """,
-        (model_name, PROMPT_VERSION),
+        (model_name, PROMPT_VERSION, limit),
     ).fetchall()
 
     count = 0
     for paper_id, title, abstract in rows:
         try:
             result = summarize_abstract(llm, title, abstract)
+
             conn.execute(
                 """
                 INSERT INTO summaries (paper_id, model_name, prompt_version, summary_json)
@@ -123,7 +140,10 @@ def summarize_unsummarized_papers(
                 (short_summary, paper_id),
             )
             count += 1
-        except Exception:
+
+        except Exception as exc:
+            print(f"Summary failed for paper_id={paper_id}, title={title!r}: {exc}")
+            conn.rollback()
             continue
 
     conn.commit()
