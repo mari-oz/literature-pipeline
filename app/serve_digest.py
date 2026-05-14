@@ -1,8 +1,13 @@
+from __future__ import annotations
+
+import argparse
+import html
 import sqlite3
+import traceback
 from pathlib import Path
 from flask import Flask, jsonify, request, render_template_string
 
-DB_PATH = Path('/data/pipeline.db')
+DB_PATH = Path("/data/pipeline.db")
 app = Flask(__name__)
 
 SEARCH_SQL = """
@@ -23,10 +28,10 @@ LIMIT ?
 
 PAGE = """
 <!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-  <meta charset=\"utf-8\">
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Literature Search</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
@@ -44,16 +49,16 @@ PAGE = """
 </head>
 <body>
   <h1>Literature search</h1>
-  <p class=\"muted\">FTS5 + BM25 ranking over title, abstract, and summary text.</p>
-  <form id=\"search-form\">
-    <input id=\"q\" placeholder=\"calcium AND hippocampus\" autocomplete=\"off\">
-    <button type=\"submit\">Search</button>
+  <p class="muted">FTS5 + BM25 ranking over title, abstract, and summary text.</p>
+  <form id="search-form">
+    <input id="q" placeholder="calcium AND hippocampus" autocomplete="off">
+    <button type="submit">Search</button>
   </form>
-  <div class=\"toolbar\">
-    <button id=\"rebuild-btn\" type=\"button\">Rebuild index</button>
-    <span id=\"status\" class=\"muted\"></span>
+  <div class="toolbar">
+    <button id="rebuild-btn" type="button">Rebuild index</button>
+    <span id="status" class="muted"></span>
   </div>
-  <div id=\"results\"></div>
+  <div id="results"></div>
 
   <script>
     const form = document.getElementById('search-form');
@@ -122,38 +127,38 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
-@app.get('/')
+@app.get("/")
 def home():
     return render_template_string(PAGE)
 
 
-@app.get('/api/search')
+@app.get("/api/search")
 def api_search():
-    q = (request.args.get('q') or '').strip()
-    limit = min(max(int(request.args.get('limit', 20)), 1), 100)
+    q = (request.args.get("q") or "").strip()
+    limit = min(max(int(request.args.get("limit", 20)), 1), 100)
     if not q:
-        return jsonify({'query': q, 'count': 0, 'results': []})
+        return jsonify({"query": q, "count": 0, "results": []})
 
     conn = get_conn()
     try:
         rows = conn.execute(SEARCH_SQL, (q, limit)).fetchall()
-        return jsonify({'query': q, 'count': len(rows), 'results': [dict(r) for r in rows]})
+        return jsonify({"query": q, "count": len(rows), "results": [dict(r) for r in rows]})
     except sqlite3.OperationalError as exc:
-        return jsonify({'query': q, 'count': 0, 'results': [], 'error': str(exc)}), 400
+        return jsonify({"query": q, "count": 0, "results": [], "error": str(exc)}), 400
     finally:
         conn.close()
 
 
-@app.post('/api/admin/rebuild-fts')
+@app.post("/api/admin/rebuild-fts")
 def rebuild_fts():
     conn = get_conn()
     try:
         conn.execute("INSERT INTO papers_fts(papers_fts) VALUES('rebuild')")
         conn.commit()
-        return jsonify({'status': 'ok', 'message': 'FTS rebuild complete'})
+        return jsonify({"status": "ok", "message": "FTS rebuild complete"})
     finally:
         conn.close()
 
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000, debug=True)
