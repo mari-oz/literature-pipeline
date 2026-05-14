@@ -9,7 +9,7 @@ services:
       DB_PATH: /data/pipeline.db
     command: ["python", "-m", "app.main"]
     volumes:
-      - /mnt/tank/apps/literature-pipeline/config:/config
-      - /mnt/tank/apps/literature-pipeline/data:/data
-      - /mnt/tank/apps/literature-pipeline/logs:/logs
-      - /mnt/tank/apps/literature-pipeline/output:/output
+      - /mnt/Vault/Apps/literature-pipeline/config:/config
+      - /mnt/Vault/Apps/literature-pipeline/data:/data
+      - /mnt/Vault/Apps/literature-pipeline/logs:/logs
+      - /mnt/Vault/Apps/literature-pipeline/output:/output
