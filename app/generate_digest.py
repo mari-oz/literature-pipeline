@@ -44,6 +44,10 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     with_abstract = scalar(conn, "SELECT COUNT(*) FROM papers WHERE abstract IS NOT NULL AND abstract != ''")
     with_summary = scalar(conn, "SELECT COUNT(*) FROM papers WHERE summary IS NOT NULL AND summary != ''")
     total_summaries = scalar(conn, "SELECT COUNT(*) FROM summaries")
+    with_published_version = scalar(
+        conn,
+        "SELECT COUNT(*) FROM papers WHERE published_doi IS NOT NULL AND published_doi != ''"
+    )
 
     last_24h_papers = fetchall(
         conn,
@@ -51,8 +55,8 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         SELECT
             id,
             COALESCE(title, '') AS title,
-            substr(COALESCE(doi, ''), 1, 40) AS doi,
-            substr(COALESCE(published_date, ''), 1, 19) AS published_date,
+            COALESCE(doi, '') AS doi,
+            COALESCE(published_date, '') AS published_date,
             created_at
         FROM papers
         WHERE datetime(created_at) >= datetime('now', '-1 day')
@@ -66,7 +70,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         SELECT
             s.id,
             s.paper_id,
-            substr(COALESCE(p.title, ''), 1, 100) AS title,
+            COALESCE(p.title, '') AS title,
             s.model_name,
             s.prompt_version,
             s.created_at
@@ -77,21 +81,21 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         """,
     )
 
-    published_versions_found = fetchall(
+    published_versions = fetchall(
         conn,
         """
         SELECT
-            doi,
-            title,
-            published_doi,
-            published_journal,
-            published_article_date
+            COALESCE(doi, '') AS preprint_doi,
+            COALESCE(title, '') AS title,
+            COALESCE(published_doi, '') AS published_doi,
+            COALESCE(published_journal, '') AS published_journal,
+            COALESCE(published_article_date, '') AS published_article_date
         FROM papers
         WHERE published_doi IS NOT NULL
           AND published_doi != ''
         ORDER BY datetime(COALESCE(published_article_date, created_at)) DESC
-        LIMIT 20
-        """
+        LIMIT 30
+        """,
     )
 
     duplicate_doi = fetchall(
@@ -110,7 +114,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     missing_identity = fetchall(
         conn,
         """
-        SELECT id, substr(COALESCE(title, ''), 1, 100) AS title
+        SELECT id, COALESCE(title, '') AS title
         FROM papers
         WHERE (doi IS NULL OR doi = '')
           AND (link IS NULL OR link = '')
@@ -122,7 +126,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     unenriched = fetchall(
         conn,
         """
-        SELECT id, substr(COALESCE(title, ''), 1, 100) AS title
+        SELECT id, COALESCE(title, '') AS title
         FROM papers
         WHERE abstract IS NULL OR abstract = ''
         ORDER BY id DESC
@@ -154,6 +158,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     parts.append(f"- Papers with DOI: **{with_doi}**")
     parts.append(f"- Papers with abstract: **{with_abstract}**")
     parts.append(f"- Papers with summary: **{with_summary}**")
+    parts.append(f"- Papers with published version: **{with_published_version}**")
     parts.append(f"- Summary rows: **{total_summaries}**\n")
 
     parts.append("## Papers added in the last 24 hours\n")
@@ -162,6 +167,13 @@ def generate_digest(conn: sqlite3.Connection) -> str:
 
     parts.append("## Summaries created in the last 24 hours\n")
     parts.append(md_table(last_24h_summaries, ["id", "paper_id", "title", "model_name", "prompt_version", "created_at"]))
+    parts.append("\n")
+
+    parts.append("## Published versions found\n")
+    parts.append(md_table(
+        published_versions,
+        ["preprint_doi", "title", "published_doi", "published_journal", "published_article_date"]
+    ))
     parts.append("\n")
 
     parts.append("## Attention needed\n")
