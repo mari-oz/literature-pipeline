@@ -54,12 +54,13 @@ def generate_digest(conn: sqlite3.Connection) -> str:
             id,
             substr(COALESCE(title, ''), 1, 100) AS title,
             substr(COALESCE(doi, ''), 1, 40) AS doi,
-            substr(COALESCE(published_date, ''), 1, 10) AS published_date
+            substr(COALESCE(published_date, ''), 1, 10) AS published_date,
+            created_at
         FROM papers
+        WHERE datetime(created_at) >= datetime('now', '-1 day')
         ORDER BY datetime(created_at) DESC
-        LIMIT 10
         """,
-    )
+)
 
     latest_summaries = fetchall(
         conn,
@@ -139,8 +140,8 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     parts.append(f"- Papers with summary: **{with_summary}**")
     parts.append(f"- Summary rows: **{total_summaries}**\n")
 
-    parts.append("## Latest papers\n")
-    parts.append(md_table(latest_papers, ["id", "title", "doi", "published_date"]))
+    parts.append("## Papers added in the last 24 hours\n")
+    parts.append(md_table(latest_papers, ["id", "title", "doi", "published_date", "created_at"]))
     parts.append("\n")
 
     parts.append("## Latest summaries\n")
