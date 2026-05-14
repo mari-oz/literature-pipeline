@@ -30,21 +30,34 @@ def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
             doi = paper.get("doi")
             title = paper.get("title")
             link = paper.get("link")
-            published_date = paper.get("published") or paper.get("date")
+            published_date = paper.get("published")
             summary = paper.get("summary")
 
             if not title:
                 continue
 
-            cur = conn.execute(
+            if doi:
+                existing = conn.execute(
+                    "SELECT 1 FROM papers WHERE doi = ?",
+                    (doi,),
+                ).fetchone()
+            else:
+                existing = conn.execute(
+                    "SELECT 1 FROM papers WHERE link = ?",
+                    (link,),
+                ).fetchone()
+
+            if existing:
+                continue
+
+            conn.execute(
                 """
-                INSERT OR IGNORE INTO papers (doi, title, link, published_date, summary)
+                INSERT INTO papers (doi, title, link, published_date, summary)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (doi, title, link, published_date, summary),
             )
-            if cur.rowcount > 0:
-                inserted += 1
+            inserted += 1
 
         conn.commit()
         return inserted
