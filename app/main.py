@@ -9,7 +9,7 @@ from app.fetch_biorxiv import fetch_neuroscience_feed
 from app.migrations import migrate
 from app.enrich_biorxiv import enrich_unsynced_papers
 from app.generate_digest import generate_digest
-
+from app.enrich_publication import enrich_publication_metadata
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=30)
@@ -80,7 +80,8 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int]:
     conn = get_connection(db_path)
     try:
         enriched = enrich_unsynced_papers(conn, server="biorxiv")
-
+        publication_updates = enrich_publication_metadata(conn, server="biorxiv")
+        
         model_path = os.getenv("MODEL_PATH")
         model_name = os.getenv("MODEL_NAME", "local-llama")
         do_summary = os.getenv("ENABLE_SUMMARY", "false").lower() == "true"
@@ -103,7 +104,7 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int]:
             except ImportError as exc:
                 print(f"Summarization disabled: missing dependency ({exc})")
 
-        return inserted, enriched, summarized
+        return inserted, enriched, publication_updates, summarized
     finally:
         conn.close()
 
@@ -132,8 +133,9 @@ def main() -> None:
     digest_path = write_digest(db_path)
 
     print(
-        f"Done. inserted={inserted} enriched={enriched} "
-        f"summarized={summarized} digest={digest_path}"
+    f"Done. inserted={inserted} enriched={enriched} "
+    f"publication_updates={publication_updates} "
+    f"summarized={summarized} digest={digest_path}"
     )
 
 
