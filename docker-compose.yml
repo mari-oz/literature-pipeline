@@ -27,7 +27,7 @@ services:
     environment:
       DIGEST_DIR: /data/digests
     volumes:
-      - /mnt/Vault/Apps/literature-pipeline/data:/data:ro
+      - /mnt/Vault/Apps/literature-pipeline/data:/data
     ports:
       - "8080:8080"
     restart: unless-stopped
