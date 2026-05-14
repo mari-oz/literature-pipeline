@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from app.fetch_biorxiv import fetch_neuroscience_feed
 from app.migrations import migrate
 from app.enrich_biorxiv import enrich_unsynced_papers
+from app.generate_digest import generate_digest
 
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
@@ -106,12 +108,33 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int]:
         conn.close()
 
 
+def write_digest(db_path: Path) -> Path:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        digest = generate_digest(conn)
+    finally:
+        conn.close()
+
+    digest_dir = Path(os.getenv("DIGEST_DIR", "/data/digests"))
+    digest_dir.mkdir(parents=True, exist_ok=True)
+
+    digest_path = digest_dir / f"digest-{datetime.now().strftime('%Y-%m-%d')}.md"
+    digest_path.write_text(digest, encoding="utf-8")
+    return digest_path
+
+
 def main() -> None:
     db_path = Path(os.getenv("DB_PATH", "/data/pipeline.db"))
     init_db(db_path)
 
     inserted, enriched, summarized = run_pipeline(db_path)
-    print(f"Done. inserted={inserted} enriched={enriched} summarized={summarized}")
+    digest_path = write_digest(db_path)
+
+    print(
+        f"Done. inserted={inserted} enriched={enriched} "
+        f"summarized={summarized} digest={digest_path}"
+    )
 
 
 if __name__ == "__main__":
