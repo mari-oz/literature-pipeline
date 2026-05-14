@@ -10,6 +10,83 @@ from flask import Flask, jsonify, request, render_template_string
 DB_PATH = Path("/data/pipeline.db")
 app = Flask(__name__)
 
+serve_path = Path('/root/output/fts_app/serve_digest.py')
+text = serve_path.read_text()
+insert = '''
+from datetime import datetime
+from markdown import markdown
+
+DIGEST_DIR = Path('/data/digests')
+
+
+def latest_digest_path() -> Path | None:
+    if not DIGEST_DIR.exists():
+        return None
+    files = sorted(DIGEST_DIR.glob('digest-*.md'))
+    return files[-1] if files else None
+
+
+def markdown_to_html(md_text: str) -> str:
+    return markdown(md_text, extensions=['fenced_code', 'tables'])
+
+'''
+text = text.replace('from pathlib import Path\nfrom flask import Flask, jsonify, request, render_template_string\n', 'from pathlib import Path\nfrom flask import Flask, jsonify, request, render_template_string, abort\n')
+text = text.replace('DB_PATH = Path("/data/pipeline.db")\napp = Flask(__name__)\n', 'DB_PATH = Path("/data/pipeline.db")\napp = Flask(__name__)\n' + insert)
+text = text.replace('''@app.get("/")
+def home():
+    return render_template_string(PAGE)
+''', '''@app.get("/")
+def home():
+    return render_template_string(PAGE)
+
+
+@app.get('/digest')
+def digest_page():
+    path = latest_digest_path()
+    if path is None or not path.exists():
+        return '<h1>No digest found</h1><p>Run the pipeline to generate one.</p>', 404
+    md_text = path.read_text(encoding='utf-8')
+    body = markdown_to_html(md_text)
+    html_doc = f"""<!doctype html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Latest Digest</title>
+  <style>{CSS}</style>
+</head>
+<body>
+  <div class='container'>
+    <p><a href='/'>← Search</a></p>
+    <h1>Latest digest</h1>
+    <p class='small'>{path.name}</p>
+    {body}
+  </div>
+</body>
+</html>"""
+    return html_doc
+''')
+text = text.replace('''def rebuild_fts():
+    conn = get_conn()
+    try:
+        conn.execute("INSERT INTO papers_fts(papers_fts) VALUES('rebuild')")
+        conn.commit()
+        return jsonify({"status": "ok", "message": "FTS rebuild complete"})
+    finally:
+        conn.close()
+''', '''def rebuild_fts():
+    conn = get_conn()
+    try:
+        conn.execute("INSERT INTO papers_fts(papers_fts) VALUES('rebuild')")
+        conn.commit()
+        return jsonify({"status": "ok", "message": "FTS rebuild complete"})
+    finally:
+        conn.close()
+''')
+text = text.replace('app.run(host="0.0.0.0", port=8000, debug=True)', 'app.run(host="0.0.0.0", port=int(__import__("os").getenv("PORT", "8080")), debug=True)')
+serve_path.write_text(text)
+print(serve_path.read_text()[:2000])
+
 SEARCH_SQL = """
 SELECT
     p.id,
