@@ -20,7 +20,7 @@ SELECT
     p.doi,
     p.category,
     p.published_date,
-    bm25(papers_fts, 10.0, 2.0, 5.0) AS rank,
+    bm25(papers_fts, 10.0, 3.0, 1.0) AS score,
     snippet(papers_fts, 2, '<mark>', '</mark>', ' … ', 18) AS snippet
 FROM papers_fts
 JOIN papers p ON p.id = papers_fts.rowid
