@@ -1,0 +1,15 @@
+services:
+  literature-pipeline:
+    image: ghcr.io/mari-oz/literature-pipeline:latest
+    container_name: literature-pipeline
+    restart: "no"
+    environment:
+      TZ: Europe/Berlin
+      CONFIG_PATH: /config/config.yaml
+      DB_PATH: /data/pipeline.db
+    command: ["python", "/app/app/main.py"]
+    volumes:
+      - /mnt/tank/apps/literature-pipeline/config:/config
+      - /mnt/tank/apps/literature-pipeline/data:/data
+      - /mnt/tank/apps/literature-pipeline/logs:/logs
+      - /mnt/tank/apps/literature-pipeline/output:/output
