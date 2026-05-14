@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -30,3 +31,13 @@ def init_db(db_path: Path) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def main() -> None:
+    db_path = Path(os.environ.get("DB_PATH", "/data/pipeline.db"))
+    init_db(db_path)
+    print(f"Initialized database at {db_path}")
+
+
+if __name__ == "__main__":
+    main()
