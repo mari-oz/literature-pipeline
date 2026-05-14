@@ -50,7 +50,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         """
         SELECT
             id,
-            substr(COALESCE(title, ''), 1, 100) AS title,
+            COALESCE(title, '') AS title,
             substr(COALESCE(doi, ''), 1, 40) AS doi,
             substr(COALESCE(published_date, ''), 1, 19) AS published_date,
             created_at
