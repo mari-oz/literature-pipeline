@@ -77,6 +77,23 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         """,
     )
 
+    published_versions_found = fetchall(
+        conn,
+        """
+        SELECT
+            doi,
+            title,
+            published_doi,
+            published_journal,
+            published_article_date
+        FROM papers
+        WHERE published_doi IS NOT NULL
+          AND published_doi != ''
+        ORDER BY datetime(COALESCE(published_article_date, created_at)) DESC
+        LIMIT 20
+        """
+    )
+
     duplicate_doi = fetchall(
         conn,
         """
