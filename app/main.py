@@ -8,8 +8,9 @@ from pathlib import Path
 from app.fetch_biorxiv import fetch_neuroscience_feed
 from app.migrations import migrate
 from app.enrich_biorxiv import enrich_unsynced_papers
-from app.generate_digest import generate_digest
 from app.enrich_publication import enrich_publication_metadata
+from app.generate_digest import generate_digest
+
 
 def get_connection(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=30)
@@ -73,7 +74,7 @@ def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
         conn.close()
 
 
-def run_pipeline(db_path: Path) -> tuple[int, int, int]:
+def run_pipeline(db_path: Path) -> tuple[int, int, int, int]:
     papers = fetch_neuroscience_feed()
     inserted = insert_new_papers(db_path, papers)
 
@@ -81,7 +82,7 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int]:
     try:
         enriched = enrich_unsynced_papers(conn, server="biorxiv")
         publication_updates = enrich_publication_metadata(conn, server="biorxiv")
-        
+
         model_path = os.getenv("MODEL_PATH")
         model_name = os.getenv("MODEL_NAME", "local-llama")
         do_summary = os.getenv("ENABLE_SUMMARY", "false").lower() == "true"
@@ -129,13 +130,13 @@ def main() -> None:
     db_path = Path(os.getenv("DB_PATH", "/data/pipeline.db"))
     init_db(db_path)
 
-    inserted, enriched, summarized = run_pipeline(db_path)
+    inserted, enriched, publication_updates, summarized = run_pipeline(db_path)
     digest_path = write_digest(db_path)
 
     print(
-    f"Done. inserted={inserted} enriched={enriched} "
-    f"publication_updates={publication_updates} "
-    f"summarized={summarized} digest={digest_path}"
+        f"Done. inserted={inserted} enriched={enriched} "
+        f"publication_updates={publication_updates} "
+        f"summarized={summarized} digest={digest_path}"
     )
 
 
