@@ -212,9 +212,9 @@ def digest_page():
 
 @app.get("/api/search")
 def api_search():
+    const query = q.value.trim();
     const mode = document.getElementById('mode').value;
     const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&mode=${encodeURIComponent(mode)}`);
-    q=${encodeURIComponent(query)}&mode=${encodeURIComponent(mode)}`);
     #mode = (request.args.get("mode") or "match").strip().lower()
     limit = min(max(int(request.args.get("limit", 20)), 1), 100)
     if not q:
