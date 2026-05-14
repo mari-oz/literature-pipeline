@@ -37,8 +37,6 @@ def md_table(rows: list[sqlite3.Row], columns: list[str]) -> str:
 
 
 def generate_digest(conn: sqlite3.Connection) -> str:
-    conn.row_factory = sqlite3.Row
-
     integrity = conn.execute("PRAGMA integrity_check;").fetchone()[0]
 
     total_papers = scalar(conn, "SELECT COUNT(*) FROM papers")
@@ -47,22 +45,22 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     with_summary = scalar(conn, "SELECT COUNT(*) FROM papers WHERE summary IS NOT NULL AND summary != ''")
     total_summaries = scalar(conn, "SELECT COUNT(*) FROM summaries")
 
-    latest_papers = fetchall(
+    last_24h_papers = fetchall(
         conn,
         """
         SELECT
             id,
             substr(COALESCE(title, ''), 1, 100) AS title,
             substr(COALESCE(doi, ''), 1, 40) AS doi,
-            substr(COALESCE(published_date, ''), 1, 10) AS published_date,
+            substr(COALESCE(published_date, ''), 1, 19) AS published_date,
             created_at
         FROM papers
         WHERE datetime(created_at) >= datetime('now', '-1 day')
         ORDER BY datetime(created_at) DESC
         """,
-)
+    )
 
-    latest_summaries = fetchall(
+    last_24h_summaries = fetchall(
         conn,
         """
         SELECT
@@ -74,8 +72,8 @@ def generate_digest(conn: sqlite3.Connection) -> str:
             s.created_at
         FROM summaries s
         LEFT JOIN papers p ON p.id = s.paper_id
+        WHERE datetime(s.created_at) >= datetime('now', '-1 day')
         ORDER BY datetime(s.created_at) DESC
-        LIMIT 10
         """,
     )
 
@@ -88,7 +86,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         GROUP BY doi
         HAVING n > 1
         ORDER BY n DESC, doi
-        LIMIT 20
+        LIMIT 50
         """,
     )
 
@@ -100,7 +98,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         WHERE (doi IS NULL OR doi = '')
           AND (link IS NULL OR link = '')
         ORDER BY id DESC
-        LIMIT 20
+        LIMIT 50
         """,
     )
 
@@ -111,7 +109,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         FROM papers
         WHERE abstract IS NULL OR abstract = ''
         ORDER BY id DESC
-        LIMIT 20
+        LIMIT 50
         """,
     )
 
@@ -123,15 +121,16 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         LEFT JOIN papers p ON p.id = s.paper_id
         WHERE p.id IS NULL
         ORDER BY s.id DESC
-        LIMIT 20
+        LIMIT 50
         """,
     )
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     parts: list[str] = []
-    parts.append(f"# Literature pipeline digest\n")
+    parts.append("# Literature pipeline digest\n")
     parts.append(f"_Generated: {now}_\n")
+
     parts.append("## Status\n")
     parts.append(f"- Integrity check: **{integrity}**")
     parts.append(f"- Total papers: **{total_papers}**")
@@ -141,11 +140,11 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     parts.append(f"- Summary rows: **{total_summaries}**\n")
 
     parts.append("## Papers added in the last 24 hours\n")
-    parts.append(md_table(latest_papers, ["id", "title", "doi", "published_date", "created_at"]))
+    parts.append(md_table(last_24h_papers, ["id", "title", "doi", "published_date", "created_at"]))
     parts.append("\n")
 
-    parts.append("## Latest summaries\n")
-    parts.append(md_table(latest_summaries, ["id", "paper_id", "title", "model_name", "prompt_version", "created_at"]))
+    parts.append("## Summaries created in the last 24 hours\n")
+    parts.append(md_table(last_24h_summaries, ["id", "paper_id", "title", "model_name", "prompt_version", "created_at"]))
     parts.append("\n")
 
     parts.append("## Attention needed\n")
