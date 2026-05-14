@@ -6,9 +6,7 @@ from typing import Any
 
 from llama_cpp import Llama
 
-
 PROMPT_VERSION = "v1-abstract-neuroscience"
-DB_PATH = Path('/data/pipeline.db')
 
 SUMMARY_SCHEMA = {
     "type": "object",
@@ -160,8 +158,8 @@ def summarize_unsummarized_papers(
                 """,
                 (short_summary, summary_text, paper_id),
             )
-            count += 1
 
+            count += 1
         except Exception as exc:
             print(f"Summary failed for paper_id={paper_id}, title={title!r}: {exc}")
             conn.rollback()
@@ -169,49 +167,3 @@ def summarize_unsummarized_papers(
 
     conn.commit()
     return count
-
-
-def flatten_summary(summary_json: str | dict | None) -> str:
-    if summary_json is None:
-        return ''
-    if isinstance(summary_json, str):
-        try:
-            payload = json.loads(summary_json)
-        except json.JSONDecodeError:
-            return summary_json
-    else:
-        payload = summary_json
-
-    fields = []
-    for key, value in payload.items():
-        if value is None:
-            continue
-        if isinstance(value, list):
-            value = '; '.join(str(v) for v in value)
-        elif isinstance(value, dict):
-            value = '; '.join(f'{k}: {v}' for k, v in value.items())
-        fields.append(f'{key}: {value}')
-    return ' | '.join(fields)
-
-
-def update_summary_text(conn: sqlite3.Connection) -> int:
-    rows = conn.execute('SELECT id, summary_json FROM summaries').fetchall()
-    updated = 0
-    for paper_id, summary_json in rows:
-        summary_text = flatten_summary(summary_json)
-        conn.execute(
-            'UPDATE papers SET summary_text = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            (summary_text, paper_id),
-        )
-        updated += 1
-    conn.commit()
-    return updated
-
-
-if __name__ == '__main__':
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        updated = update_summary_text(conn)
-        print(f'updated {updated} rows')
-    finally:
-        conn.close()
