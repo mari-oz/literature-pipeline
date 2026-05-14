@@ -56,10 +56,16 @@ PAGE = """
   <h1>Literature search</h1>
   <p class="muted">FTS5 + BM25 ranking over title, abstract, and summary text.</p>
   <p><a href="/digest">Open latest digest</a></p>
-  <form id="search-form">
-    <input id="q" placeholder="calcium AND hippocampus" autocomplete="off">
-    <button type="submit">Search</button>
-  </form>
+    <form id="search-form">
+      <input id="q" placeholder="calcium imaging" autocomplete="off">
+      <select id="mode">
+        <option value="match">Match</option>
+        <option value="phrase">Phrase</option>
+        <option value="prefix">Prefix</option>
+        <option value="near">Near</option>
+      </select>
+      <button type="submit">Search</button>
+    </form>
   <div class="toolbar">
     <button id="rebuild-btn" type="button">Rebuild index</button>
     <span id="status" class="muted"></span>
@@ -131,7 +137,22 @@ def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+    
+def build_fts_query(q: str, mode: str) -> str:
+    q = (q or "").strip()
+    mode = (mode or "match").lower()
 
+    if mode == "phrase":
+        return f'"{q}"'
+    if mode == "prefix":
+        return " ".join(token + "*" for token in q.split())
+    if mode == "near":
+        parts = q.rsplit(" ", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            terms, dist = parts[0], parts[1]
+            return f"NEAR({terms}, {dist})"
+        return f"NEAR({q}, 5)"
+    return q
 
 def latest_digest_path() -> Path | None:
     if not DIGEST_DIR.exists():
@@ -191,17 +212,27 @@ def digest_page():
 
 @app.get("/api/search")
 def api_search():
-    q = (request.args.get("q") or "").strip()
+    const mode = document.getElementById('mode').value;
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&mode=${encodeURIComponent(mode)}`);
+    q=${encodeURIComponent(query)}&mode=${encodeURIComponent(mode)}`);
+    #mode = (request.args.get("mode") or "match").strip().lower()
     limit = min(max(int(request.args.get("limit", 20)), 1), 100)
     if not q:
-        return jsonify({"query": q, "count": 0, "results": []})
+        return jsonify({"query": q, "mode": mode, "count": 0, "results": []})
+
+    fts_query = build_fts_query(q, mode)
 
     conn = get_conn()
     try:
-        rows = conn.execute(SEARCH_SQL, (q, limit)).fetchall()
-        return jsonify({"query": q, "count": len(rows), "results": [dict(r) for r in rows]})
+        rows = conn.execute(SEARCH_SQL, (fts_query, limit)).fetchall()
+        return jsonify({
+            "query": q,
+            "mode": mode,
+            "count": len(rows),
+            "results": [dict(r) for r in rows],
+        })
     except sqlite3.OperationalError as exc:
-        return jsonify({"query": q, "count": 0, "results": [], "error": str(exc)}), 400
+        return jsonify({"query": q, "mode": mode, "count": 0, "results": [], "error": str(exc)}), 400
     finally:
         conn.close()
 
