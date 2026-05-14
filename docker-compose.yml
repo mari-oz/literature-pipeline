@@ -7,16 +7,15 @@ services:
       TZ: Europe/Berlin
       CONFIG_PATH: /config/config.yaml
       DB_PATH: /data/pipeline.db
+      ENABLE_SUMMARY: "true"
+      MODEL_PATH: /models/your-model.gguf
+      MODEL_NAME: qwen2.5-7b-instruct-q4_k_m
+      N_CTX: "4096"
+      N_GPU_LAYERS: "0"
     command: ["python", "-m", "app.main"]
     volumes:
       - /mnt/Vault/Apps/literature-pipeline/config:/config
       - /mnt/Vault/Apps/literature-pipeline/data:/data
       - /mnt/Vault/Apps/literature-pipeline/logs:/logs
       - /mnt/Vault/Apps/literature-pipeline/output:/output
-    environment:
-      DB_PATH: /data/pipeline.db
-      ENABLE_SUMMARY: "true"
-      MODEL_PATH: /models/your-model.gguf
-      MODEL_NAME: qwen2.5-7b-instruct-q4_k_m
-      N_CTX: "4096"
-      N_GPU_LAYERS: "0"
+
