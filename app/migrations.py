@@ -7,8 +7,8 @@ def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
 
 
 def migrate(conn: sqlite3.Connection) -> None:
-    if not _column_exists(conn, 'papers', 'summary_text'):
-        conn.execute('ALTER TABLE papers ADD COLUMN summary_text TEXT')
+    if not _column_exists(conn, "papers", "summary_text"):
+        conn.execute("ALTER TABLE papers ADD COLUMN summary_text TEXT")
 
     conn.execute(
         """
@@ -43,7 +43,7 @@ def migrate(conn: sqlite3.Connection) -> None:
         """
     )
 
-    fts_count = conn.execute('SELECT count(*) FROM papers_fts').fetchone()[0]
+    fts_count = conn.execute("SELECT count(*) FROM papers_fts").fetchone()[0]
     if fts_count == 0:
         conn.execute(
             """
@@ -56,10 +56,10 @@ def migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-if __name__ == '__main__':
-    conn = sqlite3.connect('/data/pipeline.db')
+if __name__ == "__main__":
+    conn = sqlite3.connect("/data/pipeline.db")
     try:
         migrate(conn)
-        print('FTS5 migration complete')
+        print("FTS5 migration complete")
     finally:
         conn.close()
