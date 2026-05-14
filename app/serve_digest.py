@@ -5,87 +5,13 @@ import html
 import sqlite3
 import traceback
 from pathlib import Path
+
 from flask import Flask, jsonify, request, render_template_string
-
-DB_PATH = Path("/data/pipeline.db")
-app = Flask(__name__)
-
-serve_path = Path('/root/output/fts_app/serve_digest.py')
-text = serve_path.read_text()
-insert = '''
-from datetime import datetime
 from markdown import markdown
 
-DIGEST_DIR = Path('/data/digests')
-
-
-def latest_digest_path() -> Path | None:
-    if not DIGEST_DIR.exists():
-        return None
-    files = sorted(DIGEST_DIR.glob('digest-*.md'))
-    return files[-1] if files else None
-
-
-def markdown_to_html(md_text: str) -> str:
-    return markdown(md_text, extensions=['fenced_code', 'tables'])
-
-'''
-text = text.replace('from pathlib import Path\nfrom flask import Flask, jsonify, request, render_template_string\n', 'from pathlib import Path\nfrom flask import Flask, jsonify, request, render_template_string, abort\n')
-text = text.replace('DB_PATH = Path("/data/pipeline.db")\napp = Flask(__name__)\n', 'DB_PATH = Path("/data/pipeline.db")\napp = Flask(__name__)\n' + insert)
-text = text.replace('''@app.get("/")
-def home():
-    return render_template_string(PAGE)
-''', '''@app.get("/")
-def home():
-    return render_template_string(PAGE)
-
-
-@app.get('/digest')
-def digest_page():
-    path = latest_digest_path()
-    if path is None or not path.exists():
-        return '<h1>No digest found</h1><p>Run the pipeline to generate one.</p>', 404
-    md_text = path.read_text(encoding='utf-8')
-    body = markdown_to_html(md_text)
-    html_doc = f"""<!doctype html>
-<html lang='en'>
-<head>
-  <meta charset='utf-8'>
-  <meta name='viewport' content='width=device-width, initial-scale=1'>
-  <title>Latest Digest</title>
-  <style>{CSS}</style>
-</head>
-<body>
-  <div class='container'>
-    <p><a href='/'>← Search</a></p>
-    <h1>Latest digest</h1>
-    <p class='small'>{path.name}</p>
-    {body}
-  </div>
-</body>
-</html>"""
-    return html_doc
-''')
-text = text.replace('''def rebuild_fts():
-    conn = get_conn()
-    try:
-        conn.execute("INSERT INTO papers_fts(papers_fts) VALUES('rebuild')")
-        conn.commit()
-        return jsonify({"status": "ok", "message": "FTS rebuild complete"})
-    finally:
-        conn.close()
-''', '''def rebuild_fts():
-    conn = get_conn()
-    try:
-        conn.execute("INSERT INTO papers_fts(papers_fts) VALUES('rebuild')")
-        conn.commit()
-        return jsonify({"status": "ok", "message": "FTS rebuild complete"})
-    finally:
-        conn.close()
-''')
-text = text.replace('app.run(host="0.0.0.0", port=8000, debug=True)', 'app.run(host="0.0.0.0", port=int(__import__("os").getenv("PORT", "8080")), debug=True)')
-serve_path.write_text(text)
-print(serve_path.read_text()[:2000])
+DB_PATH = Path("/data/pipeline.db")
+DIGEST_DIR = Path("/data/digests")
+app = Flask(__name__)
 
 SEARCH_SQL = """
 SELECT
@@ -122,11 +48,14 @@ PAGE = """
     .rankfill { height:100%; background:#2f6fed; }
     mark { background:#fff2a8; }
     .muted { color:#666; }
+    a { color:#2f6fed; text-decoration:none; }
+    a:hover { text-decoration:underline; }
   </style>
 </head>
 <body>
   <h1>Literature search</h1>
   <p class="muted">FTS5 + BM25 ranking over title, abstract, and summary text.</p>
+  <p><a href="/digest">Open latest digest</a></p>
   <form id="search-form">
     <input id="q" placeholder="calcium AND hippocampus" autocomplete="off">
     <button type="submit">Search</button>
@@ -204,9 +133,60 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def latest_digest_path() -> Path | None:
+    if not DIGEST_DIR.exists():
+        return None
+    files = sorted(DIGEST_DIR.glob("digest-*.md"))
+    return files[-1] if files else None
+
+
+def markdown_to_html(md_text: str) -> str:
+    return markdown(md_text, extensions=["fenced_code", "tables"])
+
+
 @app.get("/")
 def home():
     return render_template_string(PAGE)
+
+
+@app.get("/digest")
+def digest_page():
+    path = latest_digest_path()
+    if path is None:
+        return "<h1>No digest found</h1><p>Run the pipeline first.</p>", 404
+
+    body = markdown_to_html(path.read_text(encoding="utf-8"))
+    return render_template_string(
+        """
+        <!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Latest Digest</title>
+          <style>
+            body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; line-height: 1.45; }
+            .muted { color: #666; }
+            a { color: #2f6fed; text-decoration: none; }
+            a:hover { text-decoration: underline; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ddd; padding: 8px; }
+            th { background: #f5f5f5; }
+            pre { overflow-x: auto; background: #f8f8f8; padding: 1rem; }
+            mark { background: #fff2a8; }
+          </style>
+        </head>
+        <body>
+          <p><a href="/">← Search</a></p>
+          <h1>Latest digest</h1>
+          <p class="muted">{{ name }}</p>
+          <div>{{ body|safe }}</div>
+        </body>
+        </html>
+        """,
+        name=path.name,
+        body=body,
+    )
 
 
 @app.get("/api/search")
@@ -238,4 +218,5 @@ def rebuild_fts():
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    import os
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8080")), debug=True)
