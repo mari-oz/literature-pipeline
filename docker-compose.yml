@@ -16,6 +16,8 @@ services:
     volumes:
       - /mnt/Vault/Apps/literature-pipeline/data:/data
       - /mnt/Vault/Apps/literature-pipeline/models:/models:ro
+      - /mnt/Vault/Apps/literature-pipeline/config:/config
+      - /mnt/Vault/Apps/literature-pipeline/output:/output
     restart: "no"
 
   digest-viewer:
