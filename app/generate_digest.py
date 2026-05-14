@@ -137,8 +137,8 @@ def generate_digest(conn: sqlite3.Connection) -> str:
             s.summary_json
         FROM summaries s
         JOIN papers p ON p.id = s.paper_id
+        WHERE datetime(s.created_at) >= datetime('now', '-1 day')
         ORDER BY datetime(s.created_at) DESC
-        LIMIT 10
         """
     )
 
