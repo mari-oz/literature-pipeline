@@ -1,0 +1,225 @@
+# Literature Digest Pipeline
+
+A local, containerized neuroscience literature pipeline for ingesting new preprints, enriching metadata, generating structured summaries with a local GGUF model via `llama-cpp-python`, rendering Markdown digests, and serving them through a lightweight browser viewer.[cite:1241][cite:1242][cite:1244][cite:686][cite:687]
+
+## Overview
+
+This project is designed to automate literature triage for neuroscience papers while remaining lightweight enough to run on homelab hardware.[cite:1241][cite:1244] It currently targets a TrueNAS Scale deployment using Docker/Portainer, SQLite for persistence, local GGUF inference through `llama-cpp-python`, and generated Markdown digests for human review.[cite:1242][cite:1123][cite:1176]
+
+The current workflow is:
+
+1. Fetch new neuroscience preprints from bioRxiv-related sources.[cite:1241][cite:690]
+2. Insert or update paper records in SQLite.[cite:690]
+3. Enrich each paper with metadata such as abstract, authors, category, version, and corresponding author information using the bioRxiv details API.[cite:690]
+4. Enrich publication linkage using the bioRxiv publications endpoint so preprints can be tied to published articles where available.[cite:687]
+5. Summarize abstracts into a structured JSON schema using a local GGUF model with `llama-cpp-python`.[cite:686][cite:1123]
+6. Flatten structured summary fields into searchable text for downstream indexing and retrieval.[cite:1228]
+7. Generate a Markdown digest for browser-based review.[cite:1125]
+8. Serve the digest through a lightweight viewer inside the container stack.[cite:1241]
+
+## Current status
+
+The pipeline has already been validated end-to-end on a local TrueNAS-based container deployment.[cite:1241][cite:1242] A CPU-only configuration using an i7-4790 with 16 GB RAM and the `Qwen2.5-3B-Instruct-Q4_K_M.gguf` model has been tested successfully, and roughly 20 papers have already been summarized and reviewed through the digest viewer.[cite:1241][cite:1244][cite:1201]
+
+The system has also progressed beyond simple ingestion.[cite:1241] It now includes metadata enrichment, publication-link enrichment, structured summaries, digest rendering, browser viewing, and a planned FTS5 search layer for full-text retrieval across titles, abstracts, and LLM-generated summary text.[cite:690][cite:687][cite:1228]
+
+## Architecture
+
+The project follows a staged document-processing pipeline rather than a single monolithic script.[cite:1241] SQLite acts as the core system of record, while enrichment and summarization add progressively richer derived data on top of feed-level paper metadata.[cite:690][cite:687][cite:686]
+
+### Processing flow
+
+```text
+bioRxiv feed/email source
+        ↓
+  fetch_biorxiv.py
+        ↓
+      papers table
+        ↓
+ enrich_biorxiv.py
+        ↓
+ enrich_publication.py
+        ↓
+    summarize.py
+        ↓
+  summaries table + summary_text
+        ↓
+ generate_digest.py
+        ↓
+   Markdown digest files
+        ↓
+  serve_digest.py viewer
+```
+
+### Runtime components
+
+| Component | Function |
+|---|---|
+| SQLite database | Stores paper records, enrichment metadata, publication linkage, and structured summaries.[cite:690][cite:686] |
+| `llama-cpp-python` + GGUF model | Runs local abstract summarization without requiring a cloud API.[cite:1123][cite:1171] |
+| Docker container | Packages the application and dependencies in a reproducible deployment unit.[cite:1176][cite:1210] |
+| TrueNAS dataset mounts | Persist the database, digests, and model files outside the container image.[cite:1176][cite:1242] |
+| Digest viewer | Exposes generated reports in a browser for daily review.[cite:1241] |
+| Planned FTS5 index | Adds full-text retrieval across titles, abstracts, and summary text.[cite:1228][cite:1094] |
+
+## Database schema
+
+The database is centered on a `papers` table that holds the canonical record for each manuscript, and a `summaries` table that stores versioned LLM outputs.[cite:690][cite:686] A future `papers_fts` FTS5 virtual table is intended to index selected text fields for fast and ranked retrieval.[cite:1228][cite:1235]
+
+### `papers`
+
+| Column | Purpose |
+|---|---|
+| `id` | Primary key for each paper record. |
+| `doi` | Unique manuscript DOI or preprint DOI.[cite:690] |
+| `title` | Paper title used for display, digesting, and search. |
+| `link` | Source URL for the paper or preprint entry. |
+| `published_date` | Preprint-side publication date from source metadata.[cite:690] |
+| `summary` | Optional short human-readable summary or bullet rollup derived from structured findings. |
+| `abstract` | Paper abstract from metadata enrichment.[cite:690] |
+| `authors` | Author string or serialized author information from the bioRxiv details API.[cite:690] |
+| `category` | Subject/category classification from bioRxiv metadata.[cite:690] |
+| `version` | Preprint version field from source metadata.[cite:690] |
+| `license` | License metadata returned by the API when available.[cite:690] |
+| `server` | Source server, typically `biorxiv` or similar preprint server metadata.[cite:690] |
+| `corresponding_author` | Corresponding author metadata returned by the details endpoint.[cite:690] |
+| `corresponding_institution` | Institution metadata associated with the corresponding author.[cite:690] |
+| `published_doi` | DOI of the published journal article, if linked by the publications endpoint.[cite:687] |
+| `published_journal` | Journal name for the published article, if available.[cite:687] |
+| `published_article_date` | Journal publication date linked to the preprint.[cite:687] |
+| `preprint_platform` | Source preprint platform metadata for downstream display. |
+| `summary_text` | Flattened searchable text assembled from structured summary fields for FTS indexing.[cite:1228] |
+| `created_at` | Record creation timestamp. |
+| `updated_at` | Record update timestamp for enrichment/summarization refreshes. |
+
+### `summaries`
+
+| Column | Purpose |
+|---|---|
+| `id` | Primary key for summary records. |
+| `paper_id` | Foreign key linking to `papers.id`.[cite:686] |
+| `model_name` | Summary model identifier, allowing side-by-side comparisons across models.[cite:686] |
+| `prompt_version` | Version tag for the extraction schema/prompt design.[cite:686] |
+| `summary_json` | Structured summary payload containing fields such as research question, methods, findings, limitations, and keywords.[cite:686] |
+| `created_at` | Timestamp indicating when the summary was produced. |
+
+### Planned `papers_fts`
+
+The intended search index is an FTS5 virtual table using SQLite’s external-content pattern.[cite:1228][cite:1235] In practice, it is expected to index `title`, `abstract`, and `summary_text`, while linking rows back to `papers.id` through `content='papers'` and `content_rowid='id'`.[cite:1228]
+
+## Repository layout
+
+The repository is structured like a compact Python application packaged for container deployment.[cite:1241][cite:1242] The exact filenames may continue to evolve, but the current or intended project layout is organized around an `app/` package plus deployment files at the repository root.[cite:1241]
+
+```text
+.
+├── Dockerfile
+├── requirements.txt
+├── docker_compose.yml
+└── app/
+    ├── main.py
+    ├── migrations.py
+    ├── fetch_biorxiv.py
+    ├── enrich_biorxiv.py
+    ├── enrich_publication.py
+    ├── summarize.py
+    ├── generate_digest.py
+    ├── serve_digest.py
+    └── search_index.py
+```
+
+## File-by-file function
+
+### Root-level files
+
+| File | Function |
+|---|---|
+| `Dockerfile` | Builds the container image and installs all Python dependencies, including `llama-cpp-python`.[cite:1123] |
+| `requirements.txt` | Declares Python packages required by the application runtime.[cite:1123] |
+| `docker_compose.yml` | Defines the service, environment variables, and mounted datasets for deployment via Portainer/TrueNAS.[cite:1176] |
+
+### Application files
+
+| File | Function |
+|---|---|
+| `app/main.py` | Main pipeline orchestrator that applies migrations, ingests papers, enriches metadata, runs summarization, and generates digests.[cite:686][cite:687] |
+| `app/migrations.py` | Creates and updates database schema, including future FTS5 table and trigger support.[cite:1228] |
+| `app/fetch_biorxiv.py` | Fetches new neuroscience preprints from source feeds or related upstream inputs.[cite:1241][cite:690] |
+| `app/enrich_biorxiv.py` | Calls the bioRxiv details API to fill in abstract, author, category, version, and related manuscript metadata.[cite:690] |
+| `app/enrich_publication.py` | Uses the bioRxiv `pubs` endpoint to link preprints to published journal articles.[cite:687] |
+| `app/summarize.py` | Loads the local GGUF model and produces structured JSON summaries from abstracts using `llama-cpp-python`.[cite:686][cite:1123] |
+| `app/generate_digest.py` | Converts recent database contents into a Markdown digest for reading and review.[cite:1125] |
+| `app/serve_digest.py` | Serves rendered digest output through a lightweight browser-accessible HTTP view.[cite:1241] |
+| `app/search_index.py` | Planned or newly added helper for querying the FTS5 index and returning ranked search results.[cite:1228][cite:1233] |
+
+## Runtime folders and mounted paths
+
+The container image is intentionally stateless, while persistent data is stored in mounted datasets on the TrueNAS host.[cite:1176][cite:1242] This separation keeps rebuilds safe and makes the application portable across deployments.[cite:1210]
+
+| Runtime path | Purpose |
+|---|---|
+| `/data/pipeline.db` | Main SQLite database used by the pipeline. |
+| `/data/digests/` | Directory containing generated Markdown digest files. |
+| `/models/` | Mounted directory containing one or more `.gguf` model files. |
+| `/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf` | Current validated local summary model for CPU-only execution.[cite:1201][cite:1244] |
+
+Typical host-side equivalents are dataset paths such as `/mnt/tank/literature-data` and `/mnt/tank/models`, mounted into the container through Docker/Compose bind mounts.[cite:1176]
+
+## Deployment notes
+
+The project is intended to run in a container on TrueNAS Scale rather than directly on the host OS.[cite:1210][cite:1216] This approach avoids modifying the appliance base system and keeps Python dependencies, the inference runtime, and the pipeline application bundled inside a reproducible image.[cite:1210][cite:1123]
+
+A typical deployment includes:
+
+- a Docker image built from the repository root,[cite:1123]
+- a mounted data dataset for SQLite and digest output,[cite:1176]
+- a mounted model dataset for `.gguf` files,[cite:1171][cite:1176]
+- environment variables such as `DB_PATH`, `DIGEST_DIR`, `ENABLE_SUMMARY`, `MODEL_NAME`, `MODEL_PATH`, `N_CTX`, and `N_GPU_LAYERS`.[cite:1162][cite:1176]
+
+For CPU-only operation on the validated homelab host, `N_GPU_LAYERS` should remain `0`, and the `MODEL_PATH` must point to a real GGUF file available within the mounted `/models` directory.[cite:1162][cite:1244]
+
+## Search roadmap: why FTS5 matters
+
+FTS5 is SQLite’s full-text search extension and works by storing an inverted index over tokenized text inside a virtual table.[cite:1228][cite:1094] Instead of scanning every row with slow `LIKE '%term%'` queries, FTS5 supports fast retrieval, phrase matching, prefix queries, boolean combinations, proximity search, and ranking via `bm25()`.[cite:1228][cite:1220][cite:1233]
+
+This is particularly valuable for a neuroscience literature workflow because search questions are often conceptual rather than exact-string lookups.[cite:1241] Examples include finding papers that mention calcium imaging and decoding together, searching limitations across summaries, or discovering all papers whose structured summaries reference hippocampal replay, GLMs, or sample-size constraints.[cite:1228][cite:1220]
+
+The practical FTS5 plan is:
+
+1. Add `summary_text` to `papers` if not already present.[cite:1228]
+2. Flatten structured summary JSON into readable text at summarization time.[cite:1228]
+3. Create `papers_fts(title, abstract, summary_text)` as an external-content index tied to `papers.id`.[cite:1228][cite:1235]
+4. Maintain the index with SQLite triggers on insert, update, and delete.[cite:1235]
+5. Expose search through a helper module first, then through the browser viewer UI.[cite:1228]
+
+## What has been validated so far
+
+Several milestones are already complete:[cite:1241]
+
+- the pipeline runs inside a containerized TrueNAS workflow,[cite:1242]
+- the local GGUF model loads correctly through `llama-cpp-python`, [cite:1123]
+- 20 papers have already been summarized and inspected for quality,[cite:1241]
+- the 3B summary model is acceptable for current abstract-level extraction tasks,[cite:1241]
+- digest generation works,[cite:1241]
+- browser viewing works after fixes to the digest server and rendering path.[cite:1241]
+
+This means the system has already crossed the line from proof of concept into a usable research-support tool.[cite:1241]
+
+## Near-term roadmap
+
+The next planned steps are primarily about retrieval, usability, and model iteration.[cite:1241]
+
+| Priority | Planned work | Value |
+|---|---|---|
+| 1 | Integrate FTS5 search end-to-end.[cite:1228] | Makes the corpus actively searchable rather than only digest-based. |
+| 2 | Surface structured fields more clearly in the digest viewer.[cite:1125] | Improves daily triage and review speed. |
+| 3 | Add a search route or search page in the viewer.[cite:1228] | Gives browser-based access to ranked search results. |
+| 4 | Trial a 7B model in a few days and compare quality vs. speed.[cite:1241][cite:1244] | Evaluates whether better extraction quality justifies the additional CPU cost. |
+| 5 | Expand author-centric indexing and retrieval workflows.[cite:1241] | Supports longitudinal tracking of specific researchers and labs. |
+| 6 | Potential later expansion to PDF/full-text handling. [cite:1093] | Moves beyond abstract-only triage once the core pipeline is stable. |
+
+## Long-term direction
+
+The longer-term trajectory is to turn the pipeline into a local literature intelligence system rather than only a daily summarizer.[cite:1241] That means combining ingestion, enrichment, structured extraction, search, author-centric retrieval, and possibly downstream export into notebooks or structured datasets useful for neuroscience project planning and review.[cite:1241]
+
+The architecture is intentionally aligned with homelab constraints: SQLite instead of a heavier database, FTS5 instead of a separate search engine, and local GGUF inference instead of cloud LLM calls.[cite:1094][cite:1123][cite:1244] That makes the system reproducible, private, inexpensive to operate, and well-matched to a containerized TrueNAS deployment.[cite:1210][cite:1216]
