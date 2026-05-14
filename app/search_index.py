@@ -30,8 +30,26 @@ def _conn(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def search_papers(conn: sqlite3.Connection, query: str, limit: int = 20):
-    return conn.execute(SEARCH_SQL, (query, limit)).fetchall()
+def search_papers(conn: sqlite3.Connection, query: str, mode: str = "match", limit: int = 20):
+    fts_query = build_fts_query(query, mode)
+    return conn.execute(
+        """
+        SELECT
+            p.id,
+            p.title,
+            p.doi,
+            p.published_date,
+            p.category,
+            bm25(papers_fts, 10.0, 3.0, 1.0) AS score,
+            snippet(papers_fts, 2, '<mark>', '</mark>', ' … ', 18) AS snippet
+        FROM papers_fts
+        JOIN papers p ON p.id = papers_fts.rowid
+        WHERE papers_fts MATCH ?
+        ORDER BY score
+        LIMIT ?
+        """,
+        (fts_query, limit),
+    ).fetchall()
 
 
 def rebuild_fts(conn: sqlite3.Connection) -> None:
@@ -59,6 +77,22 @@ def smoke_test(conn: sqlite3.Connection) -> dict:
         "papers_fts_count": count,
         "sample_hits": [dict(row) for row in sample],
     }
+    
+def build_fts_query(q: str, mode: str) -> str:
+    q = (q or "").strip()
+    mode = (mode or "match").lower()
+
+    if mode == "phrase":
+        return f'"{q}"'
+    if mode == "prefix":
+        return " ".join(token + "*" for token in q.split())
+    if mode == "near":
+        parts = q.rsplit(" ", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            terms, dist = parts[0], parts[1]
+            return f"NEAR({terms}, {dist})"
+        return f"NEAR({q}, 5)"
+    return q
 
 
 def main() -> None:
