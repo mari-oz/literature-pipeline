@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import argparse
 import sqlite3
 from datetime import datetime, timezone
@@ -35,6 +36,52 @@ def md_table(rows: list[sqlite3.Row], columns: list[str]) -> str:
         body.append("| " + " | ".join(vals) + " |")
     return "\n".join([header, sep] + body)
 
+def render_recent_structured_summaries(rows: list[sqlite3.Row]) -> str:
+    if not rows:
+        return "_None._"
+
+    parts = []
+    for row in rows:
+        title = row["title"] or ""
+        created_at = row["created_at"] or ""
+        raw = row["summary_json"] or "{}"
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            parts.append(f"### {title}\n")
+            parts.append(f"- Created: {created_at}")
+            parts.append("- Structured summary could not be parsed.\n")
+            continue
+
+        research_question = data.get("research_question", "") or ""
+        model_system = data.get("model_system", "") or ""
+        methods = data.get("methods", []) or []
+        findings = data.get("main_findings", []) or []
+        limitations = data.get("limitations", []) or []
+        keywords = data.get("keywords", []) or []
+
+        parts.append(f"### {title}\n")
+        parts.append(f"- Created: {created_at}")
+        if research_question:
+            parts.append(f"- Research question: {research_question}")
+        if model_system:
+            parts.append(f"- Model system: {model_system}")
+        if methods:
+            parts.append(f"- Methods: {', '.join(methods[:5])}")
+        if findings:
+            parts.append("- Main findings:")
+            for item in findings[:3]:
+                parts.append(f"  - {item}")
+        if limitations:
+            parts.append("- Limitations:")
+            for item in limitations[:2]:
+                parts.append(f"  - {item}")
+        if keywords:
+            parts.append(f"- Keywords: {', '.join(keywords[:8])}")
+        parts.append("")
+
+    return "\n".join(parts)
 
 def generate_digest(conn: sqlite3.Connection) -> str:
     integrity = conn.execute("PRAGMA integrity_check;").fetchone()[0]
@@ -79,6 +126,20 @@ def generate_digest(conn: sqlite3.Connection) -> str:
         WHERE datetime(s.created_at) >= datetime('now', '-1 day')
         ORDER BY datetime(s.created_at) DESC
         """,
+    )
+
+    recent_structured = fetchall(
+        conn,
+        """
+        SELECT
+            s.created_at,
+            p.title,
+            s.summary_json
+        FROM summaries s
+        JOIN papers p ON p.id = s.paper_id
+        ORDER BY datetime(s.created_at) DESC
+        LIMIT 10
+        """
     )
 
     published_versions = fetchall(
@@ -167,6 +228,10 @@ def generate_digest(conn: sqlite3.Connection) -> str:
 
     parts.append("## Summaries created in the last 24 hours\n")
     parts.append(md_table(last_24h_summaries, ["id", "paper_id", "title", "model_name", "prompt_version", "created_at"]))
+    parts.append("\n")
+
+    parts.append("## Recent structured summaries\n")
+    parts.append(render_recent_structured_summaries(recent_structured))
     parts.append("\n")
 
     parts.append("## Published versions found\n")
