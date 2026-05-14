@@ -7,15 +7,19 @@ from pathlib import Path
 from app.fetch_biorxiv import fetch_neuroscience_feed
 from app.migrations import migrate
 from app.enrich_biorxiv import enrich_unsynced_papers
-from app.summarize import build_llm, summarize_unsummarized_papers
+
+
+def get_connection(db_path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
 
 
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = get_connection(db_path)
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")
         migrate(conn)
         conn.commit()
     finally:
@@ -23,7 +27,7 @@ def init_db(db_path: Path) -> None:
 
 
 def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
-    conn = sqlite3.connect(db_path)
+    conn = get_connection(db_path)
     try:
         inserted = 0
         for paper in papers:
@@ -41,11 +45,13 @@ def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
                     "SELECT 1 FROM papers WHERE doi = ?",
                     (doi,),
                 ).fetchone()
-            else:
+            elif link:
                 existing = conn.execute(
                     "SELECT 1 FROM papers WHERE link = ?",
                     (link,),
                 ).fetchone()
+            else:
+                continue
 
             if existing:
                 continue
@@ -69,10 +75,8 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int]:
     papers = fetch_neuroscience_feed()
     inserted = insert_new_papers(db_path, papers)
 
-    conn = sqlite3.connect(db_path)
+    conn = get_connection(db_path)
     try:
-        conn.execute("PRAGMA foreign_keys = ON")
-
         enriched = enrich_unsynced_papers(conn, server="biorxiv")
 
         model_path = os.getenv("MODEL_PATH")
@@ -81,16 +85,21 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int]:
 
         summarized = 0
         if do_summary and model_path:
-            llm = build_llm(
-                model_path=model_path,
-                n_ctx=int(os.getenv("N_CTX", "4096")),
-                n_gpu_layers=int(os.getenv("N_GPU_LAYERS", "0")),
-            )
-            summarized = summarize_unsummarized_papers(
-                conn=conn,
-                llm=llm,
-                model_name=model_name,
-            )
+            try:
+                from app.summarize import build_llm, summarize_unsummarized_papers
+
+                llm = build_llm(
+                    model_path=model_path,
+                    n_ctx=int(os.getenv("N_CTX", "4096")),
+                    n_gpu_layers=int(os.getenv("N_GPU_LAYERS", "0")),
+                )
+                summarized = summarize_unsummarized_papers(
+                    conn=conn,
+                    llm=llm,
+                    model_name=model_name,
+                )
+            except ImportError as exc:
+                print(f"Summarization disabled: missing dependency ({exc})")
 
         return inserted, enriched, summarized
     finally:
@@ -102,9 +111,7 @@ def main() -> None:
     init_db(db_path)
 
     inserted, enriched, summarized = run_pipeline(db_path)
-    print(
-        f"Done. inserted={inserted} enriched={enriched} summarized={summarized}"
-    )
+    print(f"Done. inserted={inserted} enriched={enriched} summarized={summarized}")
 
 
 if __name__ == "__main__":
