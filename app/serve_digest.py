@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import html
+import traceback
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 
 CSS = """
@@ -80,16 +81,19 @@ ul.file-list { padding-left: 1.2rem; }
 
 def inline_format(text: str) -> str:
     text = html.escape(text)
+
     text = text.replace("**", "\u0000")
     parts = text.split("\u0000")
     for i in range(1, len(parts), 2):
         parts[i] = f"<strong>{parts[i]}</strong>"
     text = "".join(parts)
+
     text = text.replace("*", "\u0001")
     parts = text.split("\u0001")
     for i in range(1, len(parts), 2):
         parts[i] = f"<em>{parts[i]}</em>"
     text = "".join(parts)
+
     return text
 
 
@@ -105,10 +109,12 @@ def markdown_to_html(md: str) -> str:
         nonlocal in_table, table_lines
         if not table_lines:
             return
+
         rows = []
         for line in table_lines:
             parts = [p.strip() for p in line.strip().strip("|").split("|")]
             rows.append(parts)
+
         if len(rows) >= 2:
             header = rows[0]
             body = rows[2:] if len(rows) > 2 else []
@@ -116,11 +122,13 @@ def markdown_to_html(md: str) -> str:
             out.append("<thead><tr>" + "".join(f"<th>{inline_format(c)}</th>" for c in header) + "</tr></thead>")
             out.append("<tbody>")
             for row in body:
-                out.append("<tr>" + "".join(f"<td>{inline_format(c)}</td>" for c in row) + "</tr>")
+                padded = row + [""] * (len(header) - len(row))
+                out.append("<tr>" + "".join(f"<td>{inline_format(c)}</td>" for c in padded[:len(header)]) + "</tr>")
             out.append("</tbody></table>")
         else:
             for line in table_lines:
                 out.append(f"<p>{inline_format(line)}</p>")
+
         table_lines = []
         in_table = False
 
@@ -211,19 +219,69 @@ class DigestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, directory: str | None = None, **kwargs):
         super().__init__(*args, directory=directory, **kwargs)
 
+    def do_HEAD(self):
+        self._dispatch(head_only=True)
+
     def do_GET(self):
-        path = unquote(self.path.split("?", 1))
+        self._dispatch(head_only=False)
 
-        if path in ("/", ""):
-            return self.render_index()
+    def _dispatch(self, head_only: bool = False):
+        try:
+            path = unquote(urlsplit(self.path).path)
 
-        full = Path(self.directory) / path.lstrip("/")
-        if full.is_file() and full.suffix.lower() == ".md":
-            return self.render_markdown(full)
+            if path == "/favicon.ico":
+                return self._send_bytes(
+                    status=204,
+                    content_type="image/x-icon",
+                    data=b"",
+                    head_only=head_only,
+                )
 
-        return super().do_GET()
+            if path in ("/", ""):
+                return self.render_index(head_only=head_only)
 
-    def render_index(self):
+            full = (Path(self.directory) / path.lstrip("/")).resolve()
+            base = Path(self.directory).resolve()
+
+            if not str(full).startswith(str(base)):
+                return self.send_error(403, "Forbidden")
+
+            if full.is_file() and full.suffix.lower() == ".md":
+                return self.render_markdown(full, head_only=head_only)
+
+            return super().do_HEAD() if head_only else super().do_GET()
+
+        except Exception:
+            traceback.print_exc()
+            error_html = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server error</title>
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;padding:2rem;line-height:1.5}pre{white-space:pre-wrap;background:#1b1b1b;padding:1rem;border-radius:8px}</style>
+</head>
+<body>
+<h1>500 - Server error</h1>
+<p>The digest viewer hit an internal error while processing this request.</p>
+</body>
+</html>"""
+            return self._send_bytes(
+                status=500,
+                content_type="text/html; charset=utf-8",
+                data=error_html.encode("utf-8"),
+                head_only=head_only,
+            )
+
+    def _send_bytes(self, status: int, content_type: str, data: bytes, head_only: bool = False):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(data)
+
+    def render_index(self, head_only: bool = False):
         base = Path(self.directory)
         files = sorted(base.glob("*.md"), reverse=True)
 
@@ -250,14 +308,14 @@ class DigestHandler(SimpleHTTPRequestHandler):
 </div>
 </body>
 </html>"""
-        data = page.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        return self._send_bytes(
+            status=200,
+            content_type="text/html; charset=utf-8",
+            data=page.encode("utf-8"),
+            head_only=head_only,
+        )
 
-    def render_markdown(self, file_path: Path):
+    def render_markdown(self, file_path: Path, head_only: bool = False):
         md = file_path.read_text(encoding="utf-8")
         body = markdown_to_html(md)
 
@@ -276,12 +334,12 @@ class DigestHandler(SimpleHTTPRequestHandler):
 </div>
 </body>
 </html>"""
-        data = page.encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        return self._send_bytes(
+            status=200,
+            content_type="text/html; charset=utf-8",
+            data=page.encode("utf-8"),
+            head_only=head_only,
+        )
 
 
 def main():
