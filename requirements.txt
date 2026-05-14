@@ -1,4 +1,3 @@
 PyYAML==6.0.2
 feedparser
 requests
-llama-cpp-python
