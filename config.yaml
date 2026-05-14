@@ -7,3 +7,11 @@ paths:
   db: /data/pipeline.db
   output_dir: /output
   log_dir: /logs
+
+environment:
+  DB_PATH: /data/pipeline.db
+  ENABLE_SUMMARY: "true"
+  MODEL_PATH: /models/your-model.gguf
+  MODEL_NAME: qwen2.5-7b-instruct-q4_k_m
+  N_CTX: "4096"
+  N_GPU_LAYERS: "0"
