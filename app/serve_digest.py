@@ -384,7 +384,7 @@ def generate_digest(conn: sqlite3.Connection) -> str:
     parts.append(f"- Unenriched papers: **{len(unenriched)}**")
     parts.append(f"- Orphan summaries: **{len(orphan_summaries)}**")
 
-    parts.append("### Duplicate DOI
+    parts.append("### Duplicate DOI")
 
     parts.append(md_table(duplicate_doi, ["doi", "n"]))
     parts.append("")
