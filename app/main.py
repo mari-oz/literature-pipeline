@@ -84,6 +84,16 @@ def _store_paper_authors(conn: sqlite3.Connection, paper_id: int, authors: Itera
     return inserted
 
 
+def _count_author_links(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(*) FROM paper_authors").fetchone()
+    return int(row[0]) if row else 0
+
+
+def _count_papers_with_authors(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT COUNT(DISTINCT paper_id) FROM paper_authors").fetchone()
+    return int(row[0]) if row else 0
+
+
 def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
     conn = get_connection(db_path)
     try:
@@ -137,7 +147,7 @@ def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
         conn.close()
 
 
-def run_pipeline(db_path: Path) -> tuple[int, int, int, int]:
+def run_pipeline(db_path: Path) -> tuple[int, int, int, int, int, int]:
     papers = fetch_neuroscience_feed()
     inserted = insert_new_papers(db_path, papers)
 
@@ -168,7 +178,9 @@ def run_pipeline(db_path: Path) -> tuple[int, int, int, int]:
             except ImportError as exc:
                 print(f"Summarization disabled: missing dependency ({exc})")
 
-        return inserted, enriched, publication_updates, summarized
+        author_links = _count_author_links(conn)
+        papers_with_authors = _count_papers_with_authors(conn)
+        return inserted, enriched, publication_updates, summarized, author_links, papers_with_authors
     finally:
         conn.close()
 
@@ -193,13 +205,14 @@ def main() -> None:
     db_path = Path(os.getenv("DB_PATH", "/data/pipeline.db"))
     init_db(db_path)
 
-    inserted, enriched, publication_updates, summarized = run_pipeline(db_path)
+    inserted, enriched, publication_updates, summarized, author_links, papers_with_authors = run_pipeline(db_path)
     digest_path = write_digest(db_path)
 
     print(
         f"Done. inserted={inserted} enriched={enriched} "
         f"publication_updates={publication_updates} "
-        f"summarized={summarized} digest={digest_path}"
+        f"summarized={summarized} author_links={author_links} "
+        f"papers_with_authors={papers_with_authors} digest={digest_path}"
     )
 
 
