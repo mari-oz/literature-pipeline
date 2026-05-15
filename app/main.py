@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
 
 from app.fetch_biorxiv import fetch_neuroscience_feed
 from app.migrations import migrate
@@ -29,6 +31,59 @@ def init_db(db_path: Path) -> None:
         conn.close()
 
 
+def _normalize_author_name(name: str) -> str:
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def _split_authors(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    parts = re.split(r"\s*(?:;|,| and | & )\s*", raw)
+    return [_normalize_author_name(p) for p in parts if _normalize_author_name(p)]
+
+
+def _upsert_author(conn: sqlite3.Connection, name: str) -> int:
+    canonical_name = _normalize_author_name(name)
+    canonical_norm = canonical_name.lower()
+    row = conn.execute(
+        "SELECT id FROM authors WHERE canonical_name_norm = ?",
+        (canonical_norm,),
+    ).fetchone()
+    if row:
+        return int(row[0])
+    cur = conn.execute(
+        """
+        INSERT INTO authors (canonical_name, canonical_name_norm)
+        VALUES (?, ?)
+        """,
+        (canonical_name, canonical_norm),
+    )
+    return int(cur.lastrowid)
+
+
+def _store_paper_authors(conn: sqlite3.Connection, paper_id: int, authors: Iterable[str]) -> int:
+    inserted = 0
+    for pos, author_name in enumerate(authors, start=1):
+        if not author_name:
+            continue
+        author_id = _upsert_author(conn, author_name)
+        exists = conn.execute(
+            "SELECT 1 FROM paper_authors WHERE paper_id = ? AND author_id = ?",
+            (paper_id, author_id),
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute(
+            """
+            INSERT INTO paper_authors (paper_id, author_id, author_position)
+            VALUES (?, ?, ?)
+            """,
+            (paper_id, author_id, pos),
+        )
+        inserted += 1
+    return inserted
+
+
 def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
     conn = get_connection(db_path)
     try:
@@ -39,33 +94,41 @@ def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
             link = paper.get("link")
             published_date = paper.get("published")
             summary = paper.get("summary")
+            authors_raw = paper.get("authors") or paper.get("author") or paper.get("creator")
+            authors = _split_authors(authors_raw if isinstance(authors_raw, str) else None)
 
             if not title:
                 continue
 
             if doi:
                 existing = conn.execute(
-                    "SELECT 1 FROM papers WHERE doi = ?",
+                    "SELECT id FROM papers WHERE doi = ?",
                     (doi,),
                 ).fetchone()
             elif link:
                 existing = conn.execute(
-                    "SELECT 1 FROM papers WHERE link = ?",
+                    "SELECT id FROM papers WHERE link = ?",
                     (link,),
                 ).fetchone()
             else:
                 continue
 
             if existing:
+                paper_id = int(existing[0])
+                if authors:
+                    _store_paper_authors(conn, paper_id, authors)
                 continue
 
-            conn.execute(
+            cur = conn.execute(
                 """
-                INSERT INTO papers (doi, title, link, published_date, summary)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO papers (doi, title, link, published_date, summary, authors)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (doi, title, link, published_date, summary),
+                (doi, title, link, published_date, summary, authors_raw),
             )
+            paper_id = int(cur.lastrowid)
+            if authors:
+                _store_paper_authors(conn, paper_id, authors)
             inserted += 1
 
         conn.commit()
