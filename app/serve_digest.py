@@ -23,6 +23,9 @@ SELECT
 FROM papers_fts
 JOIN papers p ON p.id = papers_fts.rowid
 WHERE papers_fts MATCH ?
+  AND (? = '' OR p.category = ?)
+  AND (? = '' OR p.published_date >= ?)
+  AND (? = '' OR p.published_date <= ?)
 ORDER BY score
 LIMIT ?
 """
@@ -64,6 +67,9 @@ PAGE = """
       <option value="prefix">Prefix</option>
       <option value="near">Near</option>
     </select>
+    <input id="category" placeholder="category" autocomplete="off">
+    <input id="start_date" type="date">
+    <input id="end_date" type="date">
     <button type="submit">Search</button>
   </form>
 
@@ -79,6 +85,9 @@ PAGE = """
     const form = document.getElementById('search-form');
     const q = document.getElementById('q');
     const modeEl = document.getElementById('mode');
+    const categoryEl = document.getElementById('category');
+    const startDateEl = document.getElementById('start_date');
+    const endDateEl = document.getElementById('end_date');
     const results = document.getElementById('results');
     const rebuildBtn = document.getElementById('rebuild-btn');
     const status = document.getElementById('status');
@@ -118,9 +127,12 @@ PAGE = """
       e.preventDefault();
       const query = q.value.trim();
       const mode = modeEl.value;
+      const category = categoryEl.value.trim();
+      const startDate = startDateEl.value;
+      const endDate = endDateEl.value;
       if (!query) return;
       status.textContent = 'Searching...';
-      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&mode=${encodeURIComponent(mode)}`);
+      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&mode=${encodeURIComponent(mode)}&category=${encodeURIComponent(category)}&start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`);
       const data = await res.json();
       render(data.results || []);
       status.textContent = `${data.count || 0} result(s)`;
@@ -141,7 +153,6 @@ PAGE = """
 def build_fts_query(q: str, mode: str) -> str:
     q = (q or "").strip()
     mode = (mode or "match").lower()
-
     if not q:
         return q
     if mode == "phrase":
@@ -221,6 +232,9 @@ def digest_page():
 def api_search():
     q = (request.args.get("q") or "").strip()
     mode = (request.args.get("mode") or "match").strip().lower()
+    category = (request.args.get("category") or "").strip()
+    start_date = (request.args.get("start_date") or "").strip()
+    end_date = (request.args.get("end_date") or "").strip()
     limit = min(max(int(request.args.get("limit", 20)), 1), 100)
     if not q:
         return jsonify({"query": q, "mode": mode, "count": 0, "results": []})
@@ -228,7 +242,16 @@ def api_search():
     fts_query = build_fts_query(q, mode)
     conn = get_conn()
     try:
-        rows = conn.execute(SEARCH_SQL, (fts_query, limit)).fetchall()
+        rows = conn.execute(
+            SEARCH_SQL,
+            (
+                fts_query,
+                category, category,
+                start_date, start_date,
+                end_date, end_date,
+                limit,
+            ),
+        ).fetchall()
         return jsonify({
             "query": q,
             "mode": mode,
