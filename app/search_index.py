@@ -7,20 +7,41 @@ from pathlib import Path
 
 DB_PATH = Path("/data/pipeline.db")
 
+
+def build_fts_query(q: str, mode: str) -> str:
+    q = (q or "").strip()
+    mode = (mode or "match").lower()
+    if not q:
+        return q
+    if mode == "phrase":
+        return f'"{q}"'
+    if mode == "prefix":
+        return " ".join(token + "*" for token in q.split())
+    if mode == "near":
+        parts = q.rsplit(" ", 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            return f"NEAR({parts[0]}, {parts[1]})"
+        return f"NEAR({q}, 5)"
+    return q
+
+
 SEARCH_SQL = """
 SELECT
     p.id,
     p.title,
     p.doi,
-    p.category,
     p.published_date,
+    p.category,
     bm25(papers_fts, 10.0, 3.0, 1.0) AS score,
     snippet(papers_fts, 2, '<mark>', '</mark>', ' … ', 18) AS snippet
 FROM papers_fts
 JOIN papers p ON p.id = papers_fts.rowid
 WHERE papers_fts MATCH ?
+  AND (? = '' OR p.category = ?)
+  AND (? = '' OR p.published_date >= ?)
+  AND (? = '' OR p.published_date <= ?)
 ORDER BY score
-LIMIT ?;
+LIMIT ?
 """
 
 
@@ -30,25 +51,25 @@ def _conn(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def search_papers(conn: sqlite3.Connection, query: str, mode: str = "match", limit: int = 20):
+def search_papers(
+    conn: sqlite3.Connection,
+    query: str,
+    mode: str = "match",
+    category: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    limit: int = 20,
+):
     fts_query = build_fts_query(query, mode)
     return conn.execute(
-        """
-        SELECT
-            p.id,
-            p.title,
-            p.doi,
-            p.published_date,
-            p.category,
-            bm25(papers_fts, 10.0, 3.0, 1.0) AS score,
-            snippet(papers_fts, 2, '<mark>', '</mark>', ' … ', 18) AS snippet
-        FROM papers_fts
-        JOIN papers p ON p.id = papers_fts.rowid
-        WHERE papers_fts MATCH ?
-        ORDER BY score
-        LIMIT ?
-        """,
-        (fts_query, limit),
+        SEARCH_SQL,
+        (
+            fts_query,
+            category, category,
+            start_date, start_date,
+            end_date, end_date,
+            limit,
+        ),
     ).fetchall()
 
 
@@ -77,28 +98,16 @@ def smoke_test(conn: sqlite3.Connection) -> dict:
         "papers_fts_count": count,
         "sample_hits": [dict(row) for row in sample],
     }
-    
-def build_fts_query(q: str, mode: str) -> str:
-    q = (q or "").strip()
-    mode = (mode or "match").lower()
-
-    if mode == "phrase":
-        return f'"{q}"'
-    if mode == "prefix":
-        return " ".join(token + "*" for token in q.split())
-    if mode == "near":
-        parts = q.rsplit(" ", 1)
-        if len(parts) == 2 and parts[1].isdigit():
-            terms, dist = parts[0], parts[1]
-            return f"NEAR({terms}, {dist})"
-        return f"NEAR({q}, 5)"
-    return q
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="FTS5 search helper")
     parser.add_argument("query", nargs="?", help="FTS5 MATCH query")
     parser.add_argument("--db", default=str(DB_PATH), help="Path to SQLite DB")
+    parser.add_argument("--mode", default="match", choices=["match", "phrase", "prefix", "near"])
+    parser.add_argument("--category", default="")
+    parser.add_argument("--start-date", default="")
+    parser.add_argument("--end-date", default="")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--rebuild", action="store_true")
     parser.add_argument("--smoke-test", action="store_true")
@@ -112,7 +121,15 @@ def main() -> None:
         elif args.smoke_test:
             print(json.dumps(smoke_test(conn), indent=2))
         elif args.query:
-            rows = search_papers(conn, args.query, args.limit)
+            rows = search_papers(
+                conn,
+                args.query,
+                mode=args.mode,
+                category=args.category,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                limit=args.limit,
+            )
             print(json.dumps([dict(r) for r in rows], indent=2))
         else:
             parser.error("provide a query or use --rebuild / --smoke-test")
