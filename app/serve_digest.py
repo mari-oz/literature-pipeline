@@ -244,10 +244,7 @@ def render_recent_structured_summaries(conn: sqlite3.Connection, rows: list[sqli
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            parts.append(f"### {title}
-            - Created: {created_at}
-            - Structured summary could not be parsed.
-            ")
+            parts.append(f"### {title} - Created: {created_at} - Structured summary could not be parsed.")
             continue
         authors = authors_text(conn, int(row["paper_id"]), row["authors"])
         parts.append(f"### {title}")
