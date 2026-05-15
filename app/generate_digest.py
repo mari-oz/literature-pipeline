@@ -218,5 +218,3 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-Path('output/generate_digest.py').write_text(code)
-print('written output/generate_digest.py')
