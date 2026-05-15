@@ -18,25 +18,13 @@ SUMMARY_SCHEMA = {
         "limitations": {"type": "array", "items": {"type": "string"}},
         "keywords": {"type": "array", "items": {"type": "string"}},
     },
-    "required": [
-        "research_question",
-        "model_system",
-        "methods",
-        "main_findings",
-        "limitations",
-        "keywords",
-    ],
+    "required": ["research_question", "model_system", "methods", "main_findings", "limitations", "keywords"],
     "additionalProperties": False,
 }
 
 
 def build_llm(model_path: str, n_ctx: int = 4096, n_gpu_layers: int = 0) -> Llama:
-    return Llama(
-        model_path=model_path,
-        n_ctx=n_ctx,
-        n_gpu_layers=n_gpu_layers,
-        verbose=False,
-    )
+    return Llama(model_path=model_path, n_ctx=n_ctx, n_gpu_layers=n_gpu_layers, verbose=False)
 
 
 def normalize_summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -52,7 +40,6 @@ def normalize_summary(result: dict[str, Any]) -> dict[str, Any]:
 
 def build_summary_text(result: dict[str, Any]) -> str:
     parts: list[str] = []
-
     if result.get("research_question"):
         parts.append(f"research question: {result['research_question']}")
     if result.get("model_system"):
@@ -65,8 +52,8 @@ def build_summary_text(result: dict[str, Any]) -> str:
         parts.append("limitations: " + "; ".join(result["limitations"]))
     if result.get("keywords"):
         parts.append("keywords: " + "; ".join(result["keywords"]))
-
-    return "\n".join(parts)
+    return "
+".join(parts)
 
 
 def summarize_abstract(llm: Llama, title: str, abstract: str) -> dict[str, Any]:
@@ -75,7 +62,6 @@ def summarize_abstract(llm: Llama, title: str, abstract: str) -> dict[str, Any]:
         "Return valid JSON only. Do not invent details not supported by the text. "
         "If a field is unknown, use an empty string or empty list."
     )
-
     user = f"""Title:
 {title}
 
@@ -90,7 +76,6 @@ Extract these fields:
 - limitations
 - keywords
 """
-
     response = llm.create_chat_completion(
         messages=[
             {"role": "system", "content": system},
@@ -98,12 +83,8 @@ Extract these fields:
         ],
         temperature=0.1,
         max_tokens=700,
-        response_format={
-            "type": "json_object",
-            "schema": SUMMARY_SCHEMA,
-        },
+        response_format={"type": "json_object", "schema": SUMMARY_SCHEMA},
     )
-
     content = response["choices"][0]["message"]["content"]
     return normalize_summary(json.loads(content))
 
@@ -136,7 +117,6 @@ def summarize_unsummarized_papers(
         try:
             result = summarize_abstract(llm, title, abstract)
             summary_text = build_summary_text(result)
-
             conn.execute(
                 """
                 INSERT INTO summaries (paper_id, model_name, prompt_version, summary_json)
@@ -144,10 +124,8 @@ def summarize_unsummarized_papers(
                 """,
                 (paper_id, model_name, PROMPT_VERSION, json.dumps(result, ensure_ascii=False)),
             )
-
             bullets = result.get("main_findings", [])
             short_summary = " ".join(f"- {x}" for x in bullets[:3]) if bullets else None
-
             conn.execute(
                 """
                 UPDATE papers
@@ -158,12 +136,10 @@ def summarize_unsummarized_papers(
                 """,
                 (short_summary, summary_text, paper_id),
             )
-
             count += 1
         except Exception as exc:
             print(f"Summary failed for paper_id={paper_id}, title={title!r}: {exc}")
             conn.rollback()
             continue
-
     conn.commit()
     return count
