@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 
 from app.fetch_biorxiv import fetch_neuroscience_feed
-from app.migrations import migrate
 from app.enrich_biorxiv import enrich_unsynced_papers
 from app.enrich_publication import enrich_publication_metadata
 from app.generate_digest import generate_digest
