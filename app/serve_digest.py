@@ -273,13 +273,13 @@ def render_recent_structured_summaries(conn, rows):
 
 def generate_digest(conn):
     conn.row_factory = sqlite3.Row
-    integrity = conn.execute("PRAGMA integrity_check;").fetchone()
-    total_papers = conn.execute("SELECT COUNT(*) FROM papers").fetchone()
-    with_doi = conn.execute("SELECT COUNT(*) FROM papers WHERE doi IS NOT NULL AND doi != ''").fetchone()
-    with_abstract = conn.execute("SELECT COUNT(*) FROM papers WHERE abstract IS NOT NULL AND abstract != ''").fetchone()
-    with_summary = conn.execute("SELECT COUNT(*) FROM papers WHERE summary IS NOT NULL AND summary != ''").fetchone()
-    total_summaries = conn.execute("SELECT COUNT(*) FROM summaries").fetchone()
-    with_published_version = conn.execute("SELECT COUNT(*) FROM papers WHERE published_doi IS NOT NULL AND published_doi != ''").fetchone()
+    integrity = conn.execute("PRAGMA integrity_check;").fetchone()[0]
+    total_papers = conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
+    with_doi = conn.execute("SELECT COUNT(*) FROM papers WHERE doi IS NOT NULL AND doi != ''").fetchone()[0]
+    with_abstract = conn.execute("SELECT COUNT(*) FROM papers WHERE abstract IS NOT NULL AND abstract != ''").fetchone()[0]
+    with_summary = conn.execute("SELECT COUNT(*) FROM papers WHERE summary IS NOT NULL AND summary != ''").fetchone()[0]
+    total_summaries = conn.execute("SELECT COUNT(*) FROM summaries").fetchone()[0]
+    with_published_version = conn.execute("SELECT COUNT(*) FROM papers WHERE published_doi IS NOT NULL AND published_doi != ''").fetchone()[0]
 
     last_24h_papers = conn.execute("""
         SELECT id, COALESCE(title, '') AS title, COALESCE(doi, '') AS doi,
