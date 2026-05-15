@@ -1,218 +1,226 @@
 from __future__ import annotations
 
-import os
 import sqlite3
-from datetime import datetime
-from pathlib import Path
-
-from app.fetch_biorxiv import fetch_neuroscience_feed
-from app.enrich_biorxiv import enrich_unsynced_papers
-from app.enrich_publication import enrich_publication_metadata
-from app.generate_digest import generate_digest
 
 
-def get_connection(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+def get_user_version(conn: sqlite3.Connection) -> int:
+    return int(conn.execute("PRAGMA user_version").fetchone()[0])
 
 
-def init_db(db_path: Path) -> None:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = get_connection(db_path)
-    try:
-        migrate(conn)
-        conn.commit()
-    finally:
-        conn.close()
+def set_user_version(conn: sqlite3.Connection, version: int) -> None:
+    conn.execute(f"PRAGMA user_version = {version}")
 
 
-def normalize_author_name(name: str) -> str:
-    return " ".join(name.strip().split()).lower()
+def column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row[1] == column for row in rows)
 
 
-def split_authors(raw: object) -> list[str]:
-    if not raw:
-        return []
-    if isinstance(raw, list):
-        return [str(x).strip() for x in raw if str(x).strip()]
-    text = str(raw)
-    if ";" in text:
-        parts = text.split(";")
-    elif " and " in text and "," not in text:
-        parts = text.split(" and ")
-    else:
-        parts = text.split(",")
-    return [p.strip() for p in parts if p.strip()]
+def table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
 
 
-def upsert_author(conn: sqlite3.Connection, raw_name: str, orcid: str | None = None, affiliation: str | None = None) -> int:
-    canonical = " ".join(raw_name.strip().split())
-    normalized = normalize_author_name(canonical)
-    existing = None
-    if orcid:
-        existing = conn.execute("SELECT id FROM authors WHERE orcid = ?", (orcid,)).fetchone()
-    if existing is None:
-        existing = conn.execute(
-            "SELECT id FROM authors WHERE canonical_name_norm = ?",
-            (normalized,),
-        ).fetchone()
-    if existing:
-        author_id = int(existing[0])
-        conn.execute(
-            "UPDATE authors SET updated_at = CURRENT_TIMESTAMP, primary_affiliation = COALESCE(primary_affiliation, ?) WHERE id = ?",
-            (affiliation, author_id),
-        )
-    else:
-        cur = conn.execute(
-            """
-            INSERT INTO authors (canonical_name, canonical_name_norm, primary_affiliation)
-            VALUES (?, ?, ?)
-            """,
-            (canonical, normalized, affiliation),
-        )
-        author_id = int(cur.lastrowid)
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO author_names (author_id, display_name, normalized_name, name_type, source, is_preferred)
-        VALUES (?, ?, ?, 'raw_feed', 'feed', 1)
-        """,
-        (author_id, canonical, normalized),
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS papers (
+        id INTEGER PRIMARY KEY,
+        doi TEXT UNIQUE,
+        title TEXT NOT NULL,
+        link TEXT,
+        published_date TEXT,
+        summary TEXT,
+        abstract TEXT,
+        authors TEXT,
+        category TEXT,
+        version TEXT,
+        license TEXT,
+        server TEXT,
+        corresponding_author TEXT,
+        corresponding_institution TEXT,
+        published_doi TEXT,
+        published_journal TEXT,
+        published_article_date TEXT,
+        preprint_platform TEXT,
+        summary_text TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
-    return author_id
+    """)
 
-
-def link_paper_authors(conn: sqlite3.Connection, paper_id: int, authors: list[str], raw_source: str = "feed") -> int:
-    inserted = 0
-    for pos, name in enumerate(authors, start=1):
-        author_id = upsert_author(conn, name)
-        cur = conn.execute(
-            """
-            INSERT OR IGNORE INTO paper_authors
-            (paper_id, author_id, author_position, is_corresponding, affiliation_text, author_role, source_confidence)
-            VALUES (?, ?, ?, 0, NULL, ?, 1.0)
-            """,
-            (paper_id, author_id, pos, raw_source),
-        )
-        inserted += cur.rowcount
-    if not authors:
-        conn.execute(
-            "UPDATE papers SET status = COALESCE(status, 'needs_author_resolution') WHERE id = ?",
-            (paper_id,),
-        )
-    return inserted
-
-
-def insert_new_papers(db_path: Path, papers: list[dict]) -> int:
-    conn = get_connection(db_path)
-    try:
-        inserted = 0
-        for paper in papers:
-            doi = paper.get("doi")
-            title = paper.get("title")
-            link = paper.get("link")
-            published_date = paper.get("published")
-            summary = paper.get("summary")
-            authors = split_authors(paper.get("authors") or paper.get("author"))
-
-            if not title:
-                continue
-
-            if doi:
-                existing = conn.execute("SELECT id FROM papers WHERE doi = ?", (doi,)).fetchone()
-            elif link:
-                existing = conn.execute("SELECT id FROM papers WHERE link = ?", (link,)).fetchone()
-            else:
-                continue
-
-            if existing:
-                paper_id = int(existing[0])
-                link_paper_authors(conn, paper_id, authors)
-                continue
-
-            cur = conn.execute(
-                """
-                INSERT INTO papers (doi, title, link, published_date, summary, authors, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (doi, title, link, published_date, summary, "; ".join(authors) if authors else None, "discovered" if authors else "needs_author_resolution"),
-            )
-            paper_id = int(cur.lastrowid)
-            link_paper_authors(conn, paper_id, authors)
-            inserted += 1
-
-        conn.commit()
-        return inserted
-    finally:
-        conn.close()
-
-
-def run_pipeline(db_path: Path) -> tuple[int, int, int, int]:
-    papers = fetch_neuroscience_feed()
-    inserted = insert_new_papers(db_path, papers)
-
-    conn = get_connection(db_path)
-    try:
-        enriched = enrich_unsynced_papers(conn, server="biorxiv")
-        publication_updates = enrich_publication_metadata(conn, server="biorxiv")
-
-        model_path = os.getenv("MODEL_PATH")
-        model_name = os.getenv("MODEL_NAME", "local-llama")
-        do_summary = os.getenv("ENABLE_SUMMARY", "false").lower() == "true"
-
-        summarized = 0
-        if do_summary and model_path:
-            try:
-                from app.summarize import build_llm, summarize_unsummarized_papers
-
-                llm = build_llm(
-                    model_path=model_path,
-                    n_ctx=int(os.getenv("N_CTX", "4096")),
-                    n_gpu_layers=int(os.getenv("N_GPU_LAYERS", "0")),
-                )
-                summarized = summarize_unsummarized_papers(
-                    conn=conn,
-                    llm=llm,
-                    model_name=model_name,
-                )
-            except ImportError as exc:
-                print(f"Summarization disabled: missing dependency ({exc})")
-
-        return inserted, enriched, publication_updates, summarized
-    finally:
-        conn.close()
-
-
-def write_digest(db_path: Path) -> Path:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        digest = generate_digest(conn)
-    finally:
-        conn.close()
-
-    digest_dir = Path(os.getenv("DIGEST_DIR", "/data/digests"))
-    digest_dir.mkdir(parents=True, exist_ok=True)
-
-    digest_path = digest_dir / f"digest-{datetime.now().strftime('%Y-%m-%d')}.md"
-    digest_path.write_text(digest, encoding="utf-8")
-    return digest_path
-
-
-def main() -> None:
-    db_path = Path(os.getenv("DB_PATH", "/data/pipeline.db"))
-    init_db(db_path)
-
-    inserted, enriched, publication_updates, summarized = run_pipeline(db_path)
-    digest_path = write_digest(db_path)
-
-    print(
-        f"Done. inserted={inserted} enriched={enriched} "
-        f"publication_updates={publication_updates} "
-        f"summarized={summarized} digest={digest_path}"
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS summaries (
+        id INTEGER PRIMARY KEY,
+        paper_id INTEGER NOT NULL,
+        model_name TEXT NOT NULL,
+        prompt_version TEXT NOT NULL,
+        summary_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(paper_id, model_name, prompt_version),
+        FOREIGN KEY (paper_id) REFERENCES papers(id) ON DELETE CASCADE
     )
+    """)
 
+    ensure_column(conn, "papers", "published_doi", "TEXT")
+    ensure_column(conn, "papers", "published_journal", "TEXT")
+    ensure_column(conn, "papers", "published_article_date", "TEXT")
+    ensure_column(conn, "papers", "preprint_platform", "TEXT")
+    ensure_column(conn, "papers", "summary_text", "TEXT")
+    ensure_column(conn, "papers", "updated_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
 
-if __name__ == "__main__":
-    main()
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS authors (
+        id INTEGER PRIMARY KEY,
+        canonical_name TEXT NOT NULL,
+        canonical_name_norm TEXT NOT NULL,
+        family_name TEXT,
+        given_names TEXT,
+        initials TEXT,
+        orcid TEXT,
+        primary_affiliation TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(orcid)
+    )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_authors_name_norm ON authors(canonical_name_norm)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_authors_orcid ON authors(orcid)")
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS author_names (
+        id INTEGER PRIMARY KEY,
+        author_id INTEGER NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+        display_name TEXT NOT NULL,
+        normalized_name TEXT NOT NULL,
+        name_type TEXT NOT NULL,
+        source TEXT,
+        is_preferred INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(author_id, normalized_name, name_type)
+    )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_author_names_norm ON author_names(normalized_name)")
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS paper_authors (
+        paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+        author_position INTEGER NOT NULL,
+        is_corresponding INTEGER NOT NULL DEFAULT 0,
+        affiliation_text TEXT,
+        author_role TEXT,
+        source_confidence REAL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (paper_id, author_id),
+        UNIQUE(paper_id, author_position)
+    )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_author ON paper_authors(author_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_paper_authors_paper ON paper_authors(paper_id)")
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS author_external_ids (
+        id INTEGER PRIMARY KEY,
+        author_id INTEGER NOT NULL REFERENCES authors(id) ON DELETE CASCADE,
+        source TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        id_type TEXT NOT NULL,
+        is_verified INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(source, external_id),
+        UNIQUE(author_id, source, id_type, external_id)
+    )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_author_external_ids_author ON author_external_ids(author_id)")
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS author_expansion_jobs (
+        id INTEGER PRIMARY KEY,
+        author_id INTEGER NOT NULL REFERENCES authors(id),
+        source TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'queued',
+        started_at TEXT,
+        finished_at TEXT,
+        query_text TEXT,
+        result_count INTEGER DEFAULT 0,
+        papers_inserted INTEGER DEFAULT 0,
+        papers_updated INTEGER DEFAULT 0,
+        error_text TEXT
+    )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_author_expansion_jobs_author ON author_expansion_jobs(author_id)")
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS external_records (
+        id INTEGER PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_record_id TEXT NOT NULL,
+        author_id INTEGER REFERENCES authors(id),
+        raw_json_path TEXT NOT NULL,
+        title TEXT,
+        doi TEXT,
+        pmid TEXT,
+        published_at TEXT,
+        journal TEXT,
+        import_status TEXT NOT NULL DEFAULT 'staged',
+        matched_paper_id INTEGER REFERENCES papers(id),
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(source, source_record_id)
+    )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_records_author ON external_records(author_id)")
+
+    conn.execute("""
+    CREATE VIRTUAL TABLE IF NOT EXISTS papers_fts USING fts5(
+        title,
+        abstract,
+        summary_text,
+        content='papers',
+        content_rowid='id'
+    )
+    """)
+
+    conn.execute("DROP TRIGGER IF EXISTS papers_ai")
+    conn.execute("DROP TRIGGER IF EXISTS papers_ad")
+    conn.execute("DROP TRIGGER IF EXISTS papers_au")
+    conn.execute("""
+    CREATE TRIGGER IF NOT EXISTS papers_ai AFTER INSERT ON papers BEGIN
+        INSERT INTO papers_fts(rowid, title, abstract, summary_text)
+        VALUES (new.id, new.title, new.abstract, new.summary_text);
+    END;
+    """)
+    conn.execute("""
+    CREATE TRIGGER IF NOT EXISTS papers_ad AFTER DELETE ON papers BEGIN
+        INSERT INTO papers_fts(papers_fts, rowid, title, abstract, summary_text)
+        VALUES ('delete', old.id, old.title, old.abstract, old.summary_text);
+    END;
+    """)
+    conn.execute("""
+    CREATE TRIGGER IF NOT EXISTS papers_au AFTER UPDATE ON papers BEGIN
+        INSERT INTO papers_fts(papers_fts, rowid, title, abstract, summary_text)
+        VALUES ('delete', old.id, old.title, old.abstract, old.summary_text);
+        INSERT INTO papers_fts(rowid, title, abstract, summary_text)
+        VALUES (new.id, new.title, new.abstract, new.summary_text);
+    END;
+    """)
+
+    count = conn.execute("SELECT COUNT(*) FROM papers_fts").fetchone()[0]
+    if count == 0:
+        conn.execute("""
+        INSERT INTO papers_fts(rowid, title, abstract, summary_text)
+        SELECT id, title, abstract, summary_text
+        FROM papers
+        """)
+
+    conn.commit()
