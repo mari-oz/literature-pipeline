@@ -191,7 +191,7 @@ def markdown_to_html(md: str) -> str:
     return "\n".join(out)
 
 def authors_text(conn: sqlite3.Connection, paper_id: int, fallback: str | None = None) -> str:
-    cols = {row for row in conn.execute("PRAGMA table_info(paper_authors)").fetchall()}[1]
+    cols = [row for row in conn.execute("PRAGMA table_info(paper_authors)").fetchall()][1]
     select_cols = ["COALESCE(a.canonical_name, '') AS name"]
     if "author_name" in cols:
         select_cols.insert(0, "pa.author_name")
