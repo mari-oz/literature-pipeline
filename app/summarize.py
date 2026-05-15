@@ -52,8 +52,7 @@ def build_summary_text(result: dict[str, Any]) -> str:
         parts.append("limitations: " + "; ".join(result["limitations"]))
     if result.get("keywords"):
         parts.append("keywords: " + "; ".join(result["keywords"]))
-    return "
-".join(parts)
+    return "".join(parts)
 
 
 def summarize_abstract(llm: Llama, title: str, abstract: str) -> dict[str, Any]:
@@ -62,20 +61,15 @@ def summarize_abstract(llm: Llama, title: str, abstract: str) -> dict[str, Any]:
         "Return valid JSON only. Do not invent details not supported by the text. "
         "If a field is unknown, use an empty string or empty list."
     )
-    user = f"""Title:
-{title}
-
-Abstract:
-{abstract}
-
-Extract these fields:
-- research_question
-- model_system
-- methods
-- main_findings
-- limitations
-- keywords
-"""
+    user = f"""Title:{title} Abstract:{abstract}
+    Extract these fields:
+    - research_question
+    - model_system
+    - methods
+    - main_findings
+    - limitations
+    - keywords
+    """
     response = llm.create_chat_completion(
         messages=[
             {"role": "system", "content": system},
