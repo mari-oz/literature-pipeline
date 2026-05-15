@@ -190,8 +190,7 @@ def markdown_to_html(md: str) -> str:
         out.append("</ul>")
     if in_code:
         out.append("</code></pre>")
-    return "
-".join(out)
+    return "".join(out)
 
 
 def authors_text(conn: sqlite3.Connection, paper_id: int, fallback: str | None = None) -> str:
@@ -220,11 +219,9 @@ def md_table(rows: list[sqlite3.Row], columns: list[str]) -> str:
         vals = []
         for col in columns:
             value = row[col]
-            vals.append("") if value is None else vals.append(str(value).replace("
-", " ").replace("|", "\|"))
+            vals.append("") if value is None else vals.append(str(value).replace("", " ").replace("|", "\|"))
         body.append("| " + " | ".join(vals) + " |")
-    return "
-".join([header, sep] + body)
+    return "".join([header, sep] + body)
 
 
 def fetchall(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
@@ -248,9 +245,9 @@ def render_recent_structured_summaries(conn: sqlite3.Connection, rows: list[sqli
             data = json.loads(raw)
         except json.JSONDecodeError:
             parts.append(f"### {title}
-- Created: {created_at}
-- Structured summary could not be parsed.
-")
+            - Created: {created_at}
+            - Structured summary could not be parsed.
+            ")
             continue
         authors = authors_text(conn, int(row["paper_id"]), row["authors"])
         parts.append(f"### {title}")
@@ -278,8 +275,7 @@ def render_recent_structured_summaries(conn: sqlite3.Connection, rows: list[sqli
         if keywords:
             parts.append(f"- Keywords: {', '.join(keywords[:8])}")
         parts.append("")
-    return "
-".join(parts)
+    return "".join(parts)
 
 
 def generate_digest(conn: sqlite3.Connection) -> str:
@@ -359,62 +355,56 @@ def generate_digest(conn: sqlite3.Connection) -> str:
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     parts: list[str] = []
-    parts.append("# Literature pipeline digest
-")
-    parts.append(f"_Generated: {now}_
-")
-    parts.append("## Status
-")
+    parts.append("# Literature pipeline digest")
+    parts.append(f"_Generated: {now}_")
+    parts.append("## Status")
     parts.append(f"- Integrity check: **{integrity}**")
     parts.append(f"- Total papers: **{total_papers}**")
     parts.append(f"- Papers with DOI: **{with_doi}**")
     parts.append(f"- Papers with abstract: **{with_abstract}**")
     parts.append(f"- Papers with summary: **{with_summary}**")
     parts.append(f"- Papers with published version: **{with_published_version}**")
-    parts.append(f"- Summary rows: **{total_summaries}**
-")
-    parts.append("## Papers added in the last 24 hours
-")
+    parts.append(f"- Summary rows: **{total_summaries}**")
+    parts.append("## Papers added in the last 24 hours")
     parts.append(md_table(last_24h_papers, ["id", "title", "doi", "published_date", "created_at"]))
-    parts.append("
+    parts.append("")
 ## Summaries created in the last 24 hours
-")
+
     parts.append(md_table(last_24h_summaries, ["id", "paper_id", "title", "model_name", "prompt_version", "created_at"]))
-    parts.append("
+    parts.append("")
 ## Recent structured summaries
-")
+
     parts.append(render_recent_structured_summaries(conn, recent_structured))
-    parts.append("
+    parts.append("")
 ## Published versions found
-")
+
     parts.append(md_table(published_versions, ["preprint_doi", "title", "published_doi", "published_journal", "published_article_date"]))
-    parts.append("
+    parts.append("")
 ## Attention needed
-")
+
     parts.append(f"- Duplicate DOI rows: **{len(duplicate_doi)}**")
     parts.append(f"- Missing identity rows: **{len(missing_identity)}**")
     parts.append(f"- Unenriched papers: **{len(unenriched)}**")
-    parts.append(f"- Orphan summaries: **{len(orphan_summaries)}**
-")
+    parts.append(f"- Orphan summaries: **{len(orphan_summaries)}**")
+
     parts.append("### Duplicate DOI
-")
+
     parts.append(md_table(duplicate_doi, ["doi", "n"]))
-    parts.append("
+    parts.append("")
 ### Missing identity
-")
+
     parts.append(md_table(missing_identity, ["id", "title"]))
-    parts.append("
+    parts.append("")
 ### Unenriched papers
-")
+
     parts.append(md_table(unenriched, ["id", "title"]))
-    parts.append("
+    parts.append("")
 ### Orphan summaries
-")
+
     parts.append(md_table(orphan_summaries, ["id", "paper_id", "model_name", "prompt_version"]))
-    parts.append("
-")
-    return "
-".join(parts)
+    parts.append("")
+
+    return "".join(parts)
 
 
 class DigestHandler(SimpleHTTPRequestHandler):
@@ -456,8 +446,7 @@ class DigestHandler(SimpleHTTPRequestHandler):
     def render_index(self, head_only: bool = False):
         base = Path(self.directory)
         files = sorted(base.glob("*.md"), reverse=True)
-        items = "
-".join(f'<li><a href="/{f.name}">{html.escape(f.name)}</a></li>' for f in files)
+        items = "".join(f'<li><a href="/{f.name}">{html.escape(f.name)}</a></li>' for f in files)
         html_doc = f"<html><head><style>{CSS}</style><title>Digests</title></head><body><div class='container'><h1>Digests</h1><ul class='file-list'>{items}</ul></div></body></html>"
         return self._send_bytes(200, "text/html; charset=utf-8", html_doc.encode("utf-8"), head_only)
 
