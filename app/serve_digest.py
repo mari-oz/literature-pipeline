@@ -92,7 +92,6 @@ def inline_format(text: str) -> str:
         parts[i] = f"<em>{parts[i]}</em>"
     return "".join(parts)
 
-
 def markdown_to_html(md: str) -> str:
     lines = md.splitlines()
     out: list[str] = []
@@ -191,7 +190,6 @@ def markdown_to_html(md: str) -> str:
         out.append("</code></pre>")
     return "\n".join(out)
 
-
 def authors_text(conn, paper_id: int, fallback: str | None = None) -> str:
     rows = conn.execute(
         """
@@ -203,8 +201,7 @@ def authors_text(conn, paper_id: int, fallback: str | None = None) -> str:
         """,
         (paper_id,),
     ).fetchall()
-    return "; ".join(row[0] for row in rows) if rows else (fallback or "")
-
+    return "; ".join(row for row in rows) if rows else (fallback or "")
 
 def md_table(rows, columns):
     if not rows:
@@ -219,10 +216,9 @@ def md_table(rows, columns):
             if value is None:
                 vals.append("")
             else:
-                vals.append(str(value).replace("\n", " ").replace("|", r"\\|"))
+                vals.append(str(value).replace("\n", " ").replace("|", r"\|"))
         body.append("| " + " | ".join(vals) + " |")
     return "\n".join([header, sep] + body)
-
 
 def render_recent_structured_summaries(conn, rows):
     if not rows:
@@ -264,16 +260,15 @@ def render_recent_structured_summaries(conn, rows):
         parts.append("")
     return "\n".join(parts)
 
-
 def generate_digest(conn):
     conn.row_factory = sqlite3.Row
-    integrity = conn.execute("PRAGMA integrity_check;").fetchone()[0]
-    total_papers = conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
-    with_doi = conn.execute("SELECT COUNT(*) FROM papers WHERE doi IS NOT NULL AND doi != ''").fetchone()[0]
-    with_abstract = conn.execute("SELECT COUNT(*) FROM papers WHERE abstract IS NOT NULL AND abstract != ''").fetchone()[0]
-    with_summary = conn.execute("SELECT COUNT(*) FROM papers WHERE summary IS NOT NULL AND summary != ''").fetchone()[0]
-    total_summaries = conn.execute("SELECT COUNT(*) FROM summaries").fetchone()[0]
-    with_published_version = conn.execute("SELECT COUNT(*) FROM papers WHERE published_doi IS NOT NULL AND published_doi != ''").fetchone()[0]
+    integrity = conn.execute("PRAGMA integrity_check;").fetchone()
+    total_papers = conn.execute("SELECT COUNT(*) FROM papers").fetchone()
+    with_doi = conn.execute("SELECT COUNT(*) FROM papers WHERE doi IS NOT NULL AND doi != ''").fetchone()
+    with_abstract = conn.execute("SELECT COUNT(*) FROM papers WHERE abstract IS NOT NULL AND abstract != ''").fetchone()
+    with_summary = conn.execute("SELECT COUNT(*) FROM papers WHERE summary IS NOT NULL AND summary != ''").fetchone()
+    total_summaries = conn.execute("SELECT COUNT(*) FROM summaries").fetchone()
+    with_published_version = conn.execute("SELECT COUNT(*) FROM papers WHERE published_doi IS NOT NULL AND published_doi != ''").fetchone()
 
     last_24h_papers = conn.execute("""
         SELECT id, COALESCE(title, '') AS title, COALESCE(doi, '') AS doi,
@@ -377,10 +372,9 @@ def generate_digest(conn):
     ]
     return "\n".join(parts)
 
-
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("db", type=Path, help="Path to SQLite database")
+    parser.add_argument("db", nargs="?", type=Path, default=Path("/data/pipeline.db"), help="Path to SQLite database")
     parser.add_argument("--out", type=Path, default=Path(f"output/digest-{datetime.now().strftime('%Y-%m-%d')}.md"), help="Path to output markdown file")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
@@ -436,7 +430,6 @@ def main() -> None:
     server = HTTPServer((args.host, args.port), lambda *a, **kw: Handler(*a, directory=str(base_dir), **kw))
     print(f"Serving {base_dir} on http://{args.host}:{args.port}")
     server.serve_forever()
-
 
 if __name__ == "__main__":
     main()
