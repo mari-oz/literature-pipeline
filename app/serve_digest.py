@@ -4,7 +4,6 @@ import argparse
 import html
 import json
 import sqlite3
-import traceback
 from datetime import datetime, timezone
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
@@ -225,39 +224,44 @@ def md_table(rows, columns):
     return "\n".join([header, sep] + body)
 
 
-def render_recent_structured_summaries_inline(conn, rows):
+def render_recent_structured_summaries(conn, rows):
     if not rows:
         return "_None._"
     parts = []
     for row in rows:
-        title = row["title"] or "Untitled"
-        authors = authors_text(conn, int(row["paper_id"]), row["authors"])
+        title = row["title"] or ""
+        created_at = row["created_at"] or ""
         try:
             data = json.loads(row["summary_json"] or "{}")
         except json.JSONDecodeError:
-            data = {}
+            parts.append(f"### {title}\n- Created: {created_at}\n- Structured summary could not be parsed.\n")
+            continue
+        auth = authors_text(conn, int(row["paper_id"]), row["authors"])
+        parts.append(f"### {title}")
+        if auth:
+            parts.append(f"- Authors: {auth}")
+        parts.append(f"- Created: {created_at}")
         rq = data.get("research_question", "") or ""
         ms = data.get("model_system", "") or ""
         methods = data.get("methods", []) or []
         findings = data.get("main_findings", []) or []
         limitations = data.get("limitations", []) or []
         keywords = data.get("keywords", []) or []
-        line = f"**{title}**"
-        if authors:
-            line += f" — {authors}"
         if rq:
-            line += f" — Q: {rq}"
+            parts.append(f"- Research question: {rq}")
         if ms:
-            line += f" — Model: {ms}"
+            parts.append(f"- Model system: {ms}")
         if methods:
-            line += f" — Methods: {', '.join(methods[:3])}"
+            parts.append(f"- Methods: {', '.join(methods[:5])}")
         if findings:
-            line += f" — Findings: {', '.join(findings[:2])}"
+            parts.append("- Main findings:")
+            parts.extend(f"  - {item}" for item in findings[:3])
         if limitations:
-            line += f" — Limits: {', '.join(limitations[:2])}"
+            parts.append("- Limitations:")
+            parts.extend(f"  - {item}" for item in limitations[:2])
         if keywords:
-            line += f" — Keywords: {', '.join(keywords[:5])}"
-        parts.append(f"- {line}")
+            parts.append(f"- Keywords: {', '.join(keywords[:8])}")
+        parts.append("")
     return "\n".join(parts)
 
 
@@ -353,7 +357,7 @@ def generate_digest(conn):
         f"\n## Summaries created in the last 24 hours\n",
         md_table(last_24h_summaries, ["id", "paper_id", "title", "model_name", "prompt_version", "created_at"]),
         f"\n## Recent structured summaries\n",
-        render_recent_structured_summaries_inline(conn, recent_structured),
+        render_recent_structured_summaries(conn, recent_structured),
         f"\n## Published versions found\n",
         md_table(published_versions, ["preprint_doi", "title", "published_doi", "published_journal", "published_article_date"]),
         f"\n## Attention needed\n",
@@ -378,16 +382,60 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("db", type=Path, help="Path to SQLite database")
     parser.add_argument("--out", type=Path, default=Path(f"output/digest-{datetime.now().strftime('%Y-%m-%d')}.md"), help="Path to output markdown file")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--dir", dest="directory", default="/data/digests")
     args = parser.parse_args()
+
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row
     try:
         digest = generate_digest(conn)
     finally:
         conn.close()
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(digest, encoding="utf-8")
-    print(args.out)
+
+    base_dir = Path(args.directory)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    if args.out.parent.resolve() != base_dir.resolve():
+        target = base_dir / args.out.name
+        target.write_text(digest, encoding="utf-8")
+
+    class Handler(SimpleHTTPRequestHandler):
+        def __init__(self, *a, directory: str | None = None, **kw):
+            super().__init__(*a, directory=directory, **kw)
+
+        def do_GET(self):
+            path = unquote(urlsplit(self.path).path)
+            if path in ("/", ""):
+                files = sorted(Path(self.directory).glob("*.md"), reverse=True)
+                items = "\n".join(f'<li><a href="/{f.name}">{html.escape(f.name)}</a></li>' for f in files)
+                body = f"<html><head><style>{CSS}</style><title>Digests</title></head><body><div class='container'><h1>Digests</h1><ul class='file-list'>{items}</ul></div></body></html>"
+                data = body.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            full = (Path(self.directory) / path.lstrip("/")).resolve()
+            if full.is_file() and full.suffix.lower() == ".md":
+                md = full.read_text(encoding="utf-8")
+                body = f"<html><head><style>{CSS}</style><title>{html.escape(full.name)}</title></head><body><div class='container'>{markdown_to_html(md)}</div></body></html>"
+                data = body.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            return super().do_GET()
+
+    server = HTTPServer((args.host, args.port), lambda *a, **kw: Handler(*a, directory=str(base_dir), **kw))
+    print(f"Serving {base_dir} on http://{args.host}:{args.port}")
+    server.serve_forever()
 
 
 if __name__ == "__main__":
